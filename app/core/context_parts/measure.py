@@ -20,7 +20,29 @@ class PartsMeasure:
 
 
 def chars(value) -> int:
-    return len(value) if isinstance(value, str) else len(json.dumps(value, separators=(",", ":"), ensure_ascii=False))
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, dict):
+        if not value:
+            return 2
+        total = 2 + len(value) - 1
+        for k, v in value.items():
+            total += len(k) + 3 + (len(v) + 2 if isinstance(v, str) else chars(v))
+        return total
+    if isinstance(value, list):
+        if not value:
+            return 2
+        total = 2 + len(value) - 1
+        for item in value:
+            total += len(item) + 2 if isinstance(item, str) else chars(item)
+        return total
+    if value is None:
+        return 4
+    if isinstance(value, bool):
+        return 4 if value else 5
+    if isinstance(value, int):
+        return len(str(value))
+    return len(json.dumps(value, separators=(",", ":"), ensure_ascii=False))
 
 
 def measure(path: str, body: bytes) -> PartsMeasure | None:

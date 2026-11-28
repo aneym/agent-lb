@@ -83,6 +83,15 @@ from app.modules.proxy.fleet_guards import (
     unauthenticated_lease_allowed,
 )
 from app.modules.proxy.model_account_filter import filter_accounts_for_model
+from app.modules.proxy.orm_clone import (
+    clone_account as _clone_account,
+)
+from app.modules.proxy.orm_clone import (
+    clone_standard_usage_history as _clone_standard_usage_history,
+)
+from app.modules.proxy.orm_clone import (
+    clone_usage_history as _clone_usage_history,
+)
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
 from app.modules.proxy.request_policy import resolve_model_alias
 from app.modules.proxy.runtime_state import AccountLease, AccountLeaseKind, RuntimeState
@@ -805,10 +814,8 @@ class LoadBalancer:
         additional_quota_routing_policies: dict[str, str] = {}
         if effective_limit_name is not None:
             additional_quota_routing_policies = await _load_dashboard_additional_quota_routing_overrides()
-        additional_quota_routing_policies_cache_key = json.dumps(
-            additional_quota_routing_policies,
-            sort_keys=True,
-            separators=(",", ":"),
+        additional_quota_routing_policies_cache_key = (
+            () if not additional_quota_routing_policies else tuple(sorted(additional_quota_routing_policies.items()))
         )
         cache_key = (
             provider_name,
@@ -830,7 +837,7 @@ class LoadBalancer:
                 )
                 and (is_locally_owned(account, selection_settings) or not access_token_hard_expired(encryptor, account))
             ]
-            return replace(_clone_selection_inputs(cached), accounts=accounts)
+            return _clone_selection_inputs(cached, accounts=accounts)
         load_generation = self._selection_inputs_cache.generation
         async with self._repo_factory() as repos:
             all_accounts = await repos.accounts.list_accounts()
@@ -2261,11 +2268,6 @@ def _mapped_model_has_registry_entry(model: str | None) -> bool:
     return bool(plan_types_for_model(model))
 
 
-def _clone_account(account: Account) -> Account:
-    data = {column.name: getattr(account, column.name) for column in Account.__table__.columns}
-    return Account(**data)
-
-
 def _first_not_none(
     primary_entry: UsageHistory | AdditionalUsageHistory | None,
     secondary_entry: UsageHistory | AdditionalUsageHistory | None,
@@ -2280,22 +2282,13 @@ def _first_not_none(
     return None
 
 
-def _clone_usage_history(entry: UsageHistory | AdditionalUsageHistory) -> UsageHistory | AdditionalUsageHistory:
-    if isinstance(entry, AdditionalUsageHistory):
-        data = {column.name: getattr(entry, column.name) for column in AdditionalUsageHistory.__table__.columns}
-        return AdditionalUsageHistory(**data)
-    data = {column.name: getattr(entry, column.name) for column in UsageHistory.__table__.columns}
-    return UsageHistory(**data)
-
-
-def _clone_standard_usage_history(entry: UsageHistory) -> UsageHistory:
-    data = {column.name: getattr(entry, column.name) for column in UsageHistory.__table__.columns}
-    return UsageHistory(**data)
-
-
-def _clone_selection_inputs(selection_inputs: SelectionInputs) -> SelectionInputs:
+def _clone_selection_inputs(
+    selection_inputs: SelectionInputs,
+    *,
+    accounts: list[Account] | None = None,
+) -> SelectionInputs:
     return _SelectionInputs(
-        accounts=[_clone_account(account) for account in selection_inputs.accounts],
+        accounts=accounts if accounts is not None else [_clone_account(account) for account in selection_inputs.accounts],
         latest_primary={
             account_id: _clone_usage_history(entry) for account_id, entry in selection_inputs.latest_primary.items()
         },

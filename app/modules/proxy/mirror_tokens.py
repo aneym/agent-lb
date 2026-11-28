@@ -1,24 +1,23 @@
 from __future__ import annotations
 
 import logging
-import sys
 from contextlib import asynccontextmanager
 
 from app.core.auth.refresh import RefreshError, classify_refresh_error
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
-from app.db.models import Account, AccountStatus
+from app.db.models import Account
 from app.modules.accounts.auth_manager import (
     AccountNotOwnedError,
     AuthManager,
-    access_token_hard_expired,
-    account_needs_refresh,
+    account_is_fresh_cached,
     is_locally_owned,
 )
 from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError
 from app.modules.proxy.load_balancer import LoadBalancer
+from app.modules.proxy.orm_clone import clone_account
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 
 logger = logging.getLogger(__name__)
@@ -27,19 +26,29 @@ MIRROR_TOKEN_REVOKED_COOLDOWN_SECONDS = 60
 MIRROR_TOKEN_UNAVAILABLE_COOLDOWN_SECONDS = 15
 
 
+async def pull_mirrored_account(repo_factory: ProxyRepoFactory, account: Account) -> Account | None:
+    try:
+        await build_federation_mirror_scheduler().mirror_once()
+        async with repo_factory() as repos:
+            latest = await repos.accounts.reload_by_id(account.id)
+            if (
+                latest is not None
+                and not is_locally_owned(latest, get_settings())
+                and latest.access_token_encrypted != account.access_token_encrypted
+            ):
+                return clone_account(latest)
+    except Exception:
+        logger.warning("Mirror pull after upstream 401 failed account_id=%s", account.id, exc_info=True)
+    return None
+
+
 class MirrorTokenRefresh:
     _repo_factory: ProxyRepoFactory
     _encryptor: TokenEncryptor
     _load_balancer: LoadBalancer
 
     async def _fresh_access_token(self, account: Account, *, rejected_access_token: str | None = None) -> str:
-        if (
-            "pytest" not in sys.modules
-            and rejected_access_token is None
-            and account.status == AccountStatus.ACTIVE
-            and not access_token_hard_expired(self._encryptor, account)
-            and (not is_locally_owned(account, get_settings()) or not account_needs_refresh(self._encryptor, account))
-        ):
+        if rejected_access_token is None and account_is_fresh_cached(self._encryptor, account):
             return self._encryptor.decrypt(account.access_token_encrypted)
 
         @asynccontextmanager

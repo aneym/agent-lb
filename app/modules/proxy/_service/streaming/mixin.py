@@ -333,8 +333,8 @@ from app.modules.proxy.http_bridge_forwarding import (
 )
 from app.modules.proxy.load_balancer import AccountLease, AccountSelection
 from app.modules.proxy.tool_call_dedupe import (
-    fast_text_delta_sse,
     mark_duplicate_tool_call_downstream_event,
+    parse_text_delta_or_json,
     rewrite_parallel_tool_call_sse_line,
 )
 from app.modules.proxy.tool_call_dedupe import (
@@ -687,8 +687,7 @@ class _StreamingMixin(_StreamingRetryMixin):
                 raise terminal_stream_error
 
             async for line in iterator:
-                ev_payload = parse_sse_data_json(line)
-                fast_delta = fast_text_delta_sse(line, ev_payload)
+                fast_delta, ev_payload = parse_text_delta_or_json(line)
                 if fast_delta is not None:
                     saw_text_delta = True
                     await _touch_reservation()

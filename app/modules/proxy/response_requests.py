@@ -83,7 +83,7 @@ async def stream_responses(
             api_key,
             request_model=payload.model,
             request_service_tier=payload.service_tier,
-            request_usage_budget=estimate_api_key_request_usage(payload),
+            request_usage_budget=None if api_key is None else estimate_api_key_request_usage(payload),
             provider="openai",
         )
     )
@@ -210,7 +210,7 @@ async def collect_responses(
         api_key,
         request_model=payload.model,
         request_service_tier=payload.service_tier,
-        request_usage_budget=estimate_api_key_request_usage(payload),
+        request_usage_budget=None if api_key is None else estimate_api_key_request_usage(payload),
         provider="openai",
     )
 

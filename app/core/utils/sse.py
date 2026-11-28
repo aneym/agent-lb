@@ -29,14 +29,56 @@ async def inject_sse_keepalives(
             yield chunk
         return
 
+    loop = asyncio.get_running_loop()
     iterator = source.__aiter__()
     pending: asyncio.Task[str] | None = None
+    timer: asyncio.TimerHandle | None = None
+    waiter: asyncio.Future[bool] | None = None
+
+    def _on_timer() -> None:
+        nonlocal timer
+        timer = None
+        if waiter is not None and not waiter.done():
+            waiter.set_result(False)
+
+    def _on_pending_done(_task: asyncio.Task[str]) -> None:
+        if waiter is not None and not waiter.done():
+            waiter.set_result(True)
+
     try:
+        deadline = loop.time() + interval_seconds
         while True:
             if pending is None:
                 pending = asyncio.ensure_future(iterator.__anext__())
-            done, _ = await asyncio.wait((pending,), timeout=interval_seconds)
-            if not done:
+            if pending.done():
+                try:
+                    chunk = pending.result()
+                except StopAsyncIteration:
+                    pending = None
+                    break
+                pending = None
+                deadline = loop.time() + interval_seconds
+                yield chunk
+                continue
+            now = loop.time()
+            if deadline - now <= 0:
+                deadline = now + interval_seconds
+                yield keepalive_frame
+                continue
+            if timer is None:
+                timer = loop.call_at(deadline, _on_timer)
+            waiter = loop.create_future()
+            pending.add_done_callback(_on_pending_done)
+            try:
+                ready = await waiter
+            finally:
+                pending.remove_done_callback(_on_pending_done)
+                waiter = None
+            if not ready:
+                now = loop.time()
+                if now < deadline:
+                    continue
+                deadline = now + interval_seconds
                 yield keepalive_frame
                 continue
             try:
@@ -45,8 +87,11 @@ async def inject_sse_keepalives(
                 pending = None
                 break
             pending = None
+            deadline = loop.time() + interval_seconds
             yield chunk
     finally:
+        if timer is not None:
+            timer.cancel()
         if pending is not None and not pending.done():
             pending.cancel()
             with anyio.CancelScope(shield=True):
@@ -86,6 +131,19 @@ def parse_sse_data_json(event_block: str) -> dict[str, JsonValue] | None:
 def extract_sse_data(event_block: str) -> str | None:
     if "data" not in event_block:
         return None
+    if "\r" not in event_block:
+        first = event_block.find("data:")
+        if first != -1 and (first == 0 or (event_block[first - 1] == "\n" and "data" not in event_block[:first])):
+            end = event_block.find("\n", first)
+            if end == -1:
+                end = len(event_block)
+            if "data" not in event_block[end:]:
+                start = first + 6 if first + 5 < end and event_block[first + 5] == " " else first + 5
+                data = event_block[start:end]
+                stripped = data.strip()
+                if not stripped or stripped == "[DONE]":
+                    return None
+                return data
     single: str | None = None
     extra: list[str] | None = None
     for raw_line in event_block.splitlines():

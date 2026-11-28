@@ -301,19 +301,20 @@ class _HTTPBridgeStreamingMixin:
         runtime_config = _http_bridge_runtime_config(dashboard_settings, _service_get_settings())
         request_id = ensure_request_id()
         self._raise_for_unsupported_input_image_references(payload)
-        payload_size_estimate_bytes = len(
-            json.dumps(payload.to_payload(), ensure_ascii=True, separators=(",", ":")).encode("utf-8")
-        )
         rewritten_file_account_id = await self._resolve_file_account_for_responses(payload, headers)
-        ws_payload_budget_bytes = _ws_transport_payload_budget_bytes(_service_get_settings())
-        if runtime_config.enabled and payload_size_estimate_bytes > ws_payload_budget_bytes:
-            logger.info(
-                "stream_responses bypassing http bridge for large payload size=%s budget=%s request_id=%s",
-                payload_size_estimate_bytes,
-                ws_payload_budget_bytes,
-                request_id,
+        if runtime_config.enabled:
+            payload_bytes = len(
+                json.dumps(payload.to_payload(), ensure_ascii=True, separators=(",", ":")).encode("utf-8")
             )
-            runtime_config = dataclasses.replace(runtime_config, enabled=False)
+            ws_budget = _ws_transport_payload_budget_bytes(_service_get_settings())
+            if payload_bytes > ws_budget:
+                logger.info(
+                    "stream_responses bypassing http bridge for large payload size=%s budget=%s request_id=%s",
+                    payload_bytes,
+                    ws_budget,
+                    request_id,
+                )
+                runtime_config = dataclasses.replace(runtime_config, enabled=False)
         image_request = _responses_request_contains_input_image(payload)
         image_generation_request = _responses_request_uses_image_generation(payload)
         force_upstream_stream_transport = "http" if image_request else None

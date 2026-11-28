@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import random
+import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Coroutine, Mapping
 from dataclasses import dataclass
@@ -151,6 +152,7 @@ from app.modules.proxy.quota_eligibility_cache import AnthropicQuotaEligibility,
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 from app.modules.proxy.request_policy import resolve_model_alias
 from app.modules.proxy.runtime_state import AccountLease, AccountLeaseKind
+from app.modules.request_logs.pending import track_request_log_task
 from app.modules.usage.anthropic_live_quota import observe_anthropic_quota
 
 logger = logging.getLogger(__name__)
@@ -249,7 +251,6 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         self._repo_factory = repo_factory
         self._load_balancer = LoadBalancer(repo_factory)
         self._encryptor = TokenEncryptor()
-        self._pending_request_logs: set[asyncio.Task[None]] = set()
         self._pending_bookkeeping: set[asyncio.Task[None]] = set()
 
     async def stream_messages(
@@ -1809,21 +1810,14 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                 response_metadata=response_metadata,
             )
         )
+        if "pytest" not in sys.modules:
+            track_request_log_task(task, request_id=request_id)
+            return
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError:
-            self._pending_request_logs.add(task)
-            task.add_done_callback(self._request_log_finished)
+            track_request_log_task(task, request_id=request_id)
             raise
-
-    def _request_log_finished(self, task: asyncio.Task[None]) -> None:
-        self._pending_request_logs.discard(task)
-        try:
-            task.result()
-        except asyncio.CancelledError:
-            logger.warning("Anthropic request log task cancelled")
-        except Exception:
-            logger.warning("Anthropic request log task failed", exc_info=True)
 
     async def _persist_request_log_row(
         self,

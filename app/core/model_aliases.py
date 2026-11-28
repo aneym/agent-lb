@@ -42,6 +42,10 @@ class Aliases:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        settings = get_settings()
+        if not settings.model_aliases and not settings.excluded_model_patterns:
+            await self.app(scope, receive, send)
+            return
         path = scope.get("path", "").rstrip("/")
         if scope["type"] not in {"http", "websocket"}:
             await self.app(scope, receive, send)

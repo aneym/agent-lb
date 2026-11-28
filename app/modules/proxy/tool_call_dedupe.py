@@ -8,7 +8,7 @@ from typing import cast
 from app.core.openai.models import OpenAIEvent
 from app.core.openai.parsing import parse_sse_event
 from app.core.types import JsonValue
-from app.core.utils.sse import format_sse_event
+from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.modules.proxy.tool_call_keys import (
     _PARALLEL_TOOL_CALL_NAME,
     _PARALLEL_TOOL_USE_DEDUPE_RECIPIENT_NAMES,
@@ -33,6 +33,22 @@ from app.modules.proxy.tool_call_replay import (
 logger = logging.getLogger(__name__)
 
 _TOOL_CALL_DEDUPE_CACHE_LIMIT = 1024
+
+
+def is_preformatted_text_delta_sse(line: str) -> bool:
+    return (
+        line.startswith("event: response.output_text.delta\ndata: {")
+        and line.endswith("\n\n")
+        and line.find("\n", 34) == len(line) - 2
+        and ('"type":"response.output_text.delta"' in line or '"type": "response.output_text.delta"' in line)
+    )
+
+
+def parse_text_delta_or_json(line: str) -> tuple[str | None, dict[str, JsonValue] | None]:
+    if is_preformatted_text_delta_sse(line):
+        return line, None
+    payload = parse_sse_data_json(line)
+    return fast_text_delta_sse(line, payload), payload
 
 
 def fast_text_delta_sse(line: str, payload: dict[str, JsonValue] | None) -> str | None:

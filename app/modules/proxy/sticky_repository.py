@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, bindparam, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,26 @@ logger = logging.getLogger(__name__)
 
 
 _DELETE_ENTRIES_CHUNK_SIZE = 250
+_GET_STICKY_ENTRY_STMT = select(StickySession).where(
+    StickySession.key == bindparam("key"),
+    StickySession.kind == bindparam("kind"),
+)
+_SQLITE_STICKY_UPSERT_BASE = sqlite_insert(StickySession.__table__)
+_SQLITE_STICKY_UPSERT_STMT = _SQLITE_STICKY_UPSERT_BASE.on_conflict_do_update(
+    index_elements=[StickySession.__table__.c.key, StickySession.__table__.c.kind],
+    set_={
+        "account_id": _SQLITE_STICKY_UPSERT_BASE.excluded.account_id,
+        "updated_at": func.now(),
+    },
+)
+_PG_STICKY_UPSERT_BASE = pg_insert(StickySession.__table__)
+_PG_STICKY_UPSERT_STMT = _PG_STICKY_UPSERT_BASE.on_conflict_do_update(
+    index_elements=[StickySession.__table__.c.key, StickySession.__table__.c.kind],
+    set_={
+        "account_id": _PG_STICKY_UPSERT_BASE.excluded.account_id,
+        "updated_at": func.now(),
+    },
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,24 +75,22 @@ class StickySessionsRepository:
     async def get_entry(self, key: str, *, kind: StickySessionKind) -> StickySession | None:
         if not key:
             return None
-        statement = select(StickySession).where(
-            StickySession.key == key,
-            StickySession.kind == kind,
-        )
-        result = await self._session.execute(statement)
+        result = await self._session.execute(_GET_STICKY_ENTRY_STMT, {"key": key, "kind": kind})
         return result.scalar_one_or_none()
 
     async def put(self, key: str, account_id: str, *, kind: StickySessionKind) -> None:
-        statement = self._build_upsert_statement(key, account_id, kind)
+        statement = self._upsert_statement()
+        params = {"key": key, "account_id": account_id, "kind": kind}
         async with sqlite_writer_section(self._session):
-            await self._session.execute(statement)
+            await self._session.execute(statement, params)
             await self._session.commit()
 
     async def upsert(self, key: str, account_id: str, *, kind: StickySessionKind) -> StickySession:
-        statement = self._build_upsert_statement(key, account_id, kind)
+        statement = self._upsert_statement()
+        params = {"key": key, "account_id": account_id, "kind": kind}
         for attempt in range(3):
             async with sqlite_writer_section(self._session):
-                await self._session.execute(statement)
+                await self._session.execute(statement, params)
                 await self._session.commit()
             row = await self.get_entry(key, kind=kind)
             if row is not None:
@@ -205,22 +223,13 @@ class StickySessionsRepository:
             await self._session.commit()
         return deleted
 
-    def _build_upsert_statement(self, key: str, account_id: str, kind: StickySessionKind) -> Insert:
+    def _upsert_statement(self) -> Insert:
         dialect = self._session.get_bind().dialect.name
+        if dialect == "sqlite":
+            return _SQLITE_STICKY_UPSERT_STMT
         if dialect == "postgresql":
-            insert_fn = pg_insert
-        elif dialect == "sqlite":
-            insert_fn = sqlite_insert
-        else:
-            raise RuntimeError(f"StickySession upsert unsupported for dialect={dialect!r}")
-        statement = insert_fn(StickySession).values(key=key, account_id=account_id, kind=kind)
-        return statement.on_conflict_do_update(
-            index_elements=[StickySession.key, StickySession.kind],
-            set_={
-                "account_id": account_id,
-                "updated_at": func.now(),
-            },
-        )
+            return _PG_STICKY_UPSERT_STMT
+        raise RuntimeError(f"StickySession upsert unsupported for dialect={dialect!r}")
 
     @staticmethod
     def _apply_filters(

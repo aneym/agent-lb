@@ -106,6 +106,8 @@ def looks_like_sse_data_block(event_block: str) -> bool:
 
 
 def looks_like_sse_comment_block(event_block: str) -> bool:
+    if not event_block or event_block.startswith(("event:", "data:")):
+        return False
     return bool(event_block.strip()) and all(
         not line.strip() or line.lstrip().startswith(":") for line in event_block.splitlines()
     )

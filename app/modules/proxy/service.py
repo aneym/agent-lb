@@ -99,7 +99,7 @@ from app.modules.accounts.auth_manager import (
     AccountNotOwnedError,
     AccountsRepositoryPort,
     AuthManager,
-    is_locally_owned,
+    account_is_fresh_cached,
 )
 from app.modules.api_keys.service_data import (
     API_KEY_USAGE_RESERVATION_DEFAULT_INPUT_TOKENS,
@@ -108,7 +108,6 @@ from app.modules.api_keys.service_data import (
     ApiKeyData,
     ApiKeyRequestUsageBudget,
 )
-from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy._service.api_key_usage import (
     _ApiKeyUsageMixin,
 )
@@ -661,6 +660,7 @@ from app.modules.proxy.http_bridge_forwarding import (
     OwnerForwardRelayFailure as OwnerForwardRelayFailure,
 )
 from app.modules.proxy.load_balancer import AccountLease, AccountLeaseKind, AccountSelection, LoadBalancer
+from app.modules.proxy.mirror_tokens import pull_mirrored_account
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 from app.modules.proxy.ring_membership import (
     RingMembershipService,
@@ -1344,6 +1344,8 @@ class ProxyService(
         force: bool = False,
         timeout_seconds: float | None = None,
     ) -> Account:
+        if not force and account_is_fresh_cached(self._encryptor, account, require_chatgpt_account_id=True):
+            return account
         token = push_token_refresh_timeout_override(timeout_seconds)
         try:
             async with self._repo_factory() as repos:
@@ -1355,17 +1357,9 @@ class ProxyService(
                 return await auth_manager.ensure_fresh(account, force=force)
         except AccountNotOwnedError as exc:
             if force:
-                try:
-                    await build_federation_mirror_scheduler().mirror_once()
-                    async with self._repo_factory() as repos:
-                        latest = await repos.accounts.reload_by_id(account.id)
-                        if latest is not None and not is_locally_owned(latest, get_settings()):
-                            if latest.access_token_encrypted != account.access_token_encrypted:
-                                return Account(
-                                    **{col.key: getattr(latest, col.key) for col in Account.__table__.columns}
-                                )
-                except Exception:
-                    logger.warning("Mirror pull after upstream 401 failed account_id=%s", account.id, exc_info=True)
+                pulled = await pull_mirrored_account(self._repo_factory, account)
+                if pulled is not None:
+                    return pulled
             raise ProxyResponseError(
                 503,
                 openai_error("mirror_token_unavailable", "Mirror access token unavailable after pull"),

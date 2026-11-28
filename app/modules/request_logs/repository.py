@@ -8,7 +8,9 @@ from uuid import uuid4
 import anyio
 from sqlalchemy import and_, select
 from sqlalchemy import exc as sa_exc
+from sqlalchemy import insert as sa_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.instrumentation import manager_of_class
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.clients.failure_observation import UpstreamObservation, failure_fields
@@ -36,8 +38,12 @@ from app.db.session import sqlite_writer_section
 from app.modules.request_logs.aggregates import RequestLogAggregates
 from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 from app.modules.request_logs.http_status import http_status_counts_since
+from app.modules.request_logs.pending import wait_for_request_log
 from app.modules.request_logs.queries import RequestLogQueries
-from app.modules.session_trace.recorder import store_context_parts
+from app.modules.session_trace.recorder import insert_context_parts
+
+_REQUEST_LOG_MANAGER = manager_of_class(RequestLog)
+_INSERT_REQUEST_LOG_STMT = sa_insert(RequestLog.__table__).returning(RequestLog.__table__.c.id)
 
 
 class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
@@ -66,6 +72,7 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
         response_id_value = response_id.strip()
         if not response_id_value:
             return None
+        await wait_for_request_log(response_id_value)
 
         base_conditions = [
             RequestLog.request_id == response_id_value,
@@ -171,82 +178,89 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
                 useragent_group if not isinstance(useragent_group, str) or useragent_group.strip() else None
             )
             guard = eval_guard_state.get()
-            log = RequestLog(
-                stripped_tools=json.dumps(guard.removed) if guard is not None and guard.removed else None,
-                requested_model_alias=requested_model_alias.get(),
-                account_id=account_id,
-                provider=provider,
-                api_key_id=api_key_id,
-                session_id=session_id,
-                client_session_id=get_client_session_id() or client_session_id,
-                caller_user=caller.caller_user,
-                caller_user_source=caller.caller_user_source,
-                caller_machine=caller.caller_machine,
-                caller_machine_source=caller.caller_machine_source,
-                caller_seat=get_caller_seat(),
-                factory_project=factory.project,
-                factory_owner=factory.owner,
-                factory_host=factory.host,
-                factory_job=factory.job,
-                room=get_room(),
-                lane=get_lane(),
-                thread_id=get_thread_id(),
-                job_id=get_job_id(),
-                dispatch_id=get_dispatch_id(),
-                unified_5h_utilization=unified_5h_utilization,
-                unified_7d_utilization=unified_7d_utilization,
-                unified_headers=unified_headers,
-                quota_observed_at=quota_observed_at,
-                request_id=resolved_request_id,
-                model=model,
-                response_model=response_model,
-                stop_reason=stop_reason,
-                stop_details_category=stop_details_category,
-                plan_type=resolved_plan_type,
-                transport=transport,
-                request_kind=request_kind,
-                useragent=resolved_useragent,
-                useragent_group=resolved_useragent_group,
-                service_tier=service_tier,
-                requested_service_tier=requested_service_tier,
-                actual_service_tier=actual_service_tier,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cached_input_tokens=cached_input_tokens,
-                cache_creation_tokens=cache_creation_tokens,
-                cache_creation_tier=cache_creation_tier,
-                cache_read_tokens=cache_read_tokens,
-                reasoning_tokens=reasoning_tokens,
-                cost_usd=None,
-                reasoning_effort=reasoning_effort,
-                latency_ms=latency_ms,
-                latency_first_token_ms=latency_first_token_ms,
-                status=status,
-                error_code=error_code,
-                error_message=error_message,
-                failure_phase=failure_phase,
-                failure_detail=failure_detail,
-                failure_exception_type=failure_exception_type,
-                upstream_status_code=upstream_status_code,
-                upstream_error_code=upstream_error_code,
-                bridge_stage=bridge_stage,
-                upstream_proxy_route_mode=upstream_proxy_route_mode,
-                upstream_proxy_pool_id=upstream_proxy_pool_id,
-                upstream_proxy_endpoint_id=upstream_proxy_endpoint_id,
-                upstream_proxy_fallback_used=upstream_proxy_fallback_used,
-                upstream_proxy_fail_closed_reason=upstream_proxy_fail_closed_reason,
-                requested_at=requested_at or utcnow(),
-            )
-            log.cost_usd = (
+            values = {
+                "stripped_tools": json.dumps(guard.removed) if guard is not None and guard.removed else None,
+                "requested_model_alias": requested_model_alias.get(),
+                "account_id": account_id,
+                "provider": provider,
+                "api_key_id": api_key_id,
+                "session_id": session_id,
+                "client_session_id": get_client_session_id() or client_session_id,
+                "caller_user": caller.caller_user,
+                "caller_user_source": caller.caller_user_source,
+                "caller_machine": caller.caller_machine,
+                "caller_machine_source": caller.caller_machine_source,
+                "caller_seat": get_caller_seat(),
+                "factory_project": factory.project,
+                "factory_owner": factory.owner,
+                "factory_host": factory.host,
+                "factory_job": factory.job,
+                "room": get_room(),
+                "lane": get_lane(),
+                "thread_id": get_thread_id(),
+                "job_id": get_job_id(),
+                "dispatch_id": get_dispatch_id(),
+                "unified_5h_utilization": unified_5h_utilization,
+                "unified_7d_utilization": unified_7d_utilization,
+                "unified_headers": unified_headers,
+                "quota_observed_at": quota_observed_at,
+                "request_id": resolved_request_id,
+                "model": model,
+                "response_model": response_model,
+                "stop_reason": stop_reason,
+                "stop_details_category": stop_details_category,
+                "plan_type": resolved_plan_type,
+                "source": source,
+                "transport": transport,
+                "request_kind": request_kind,
+                "useragent": resolved_useragent,
+                "useragent_group": resolved_useragent_group,
+                "service_tier": service_tier,
+                "requested_service_tier": requested_service_tier,
+                "actual_service_tier": actual_service_tier,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cached_input_tokens": cached_input_tokens,
+                "cache_creation_tokens": cache_creation_tokens,
+                "cache_creation_tier": cache_creation_tier,
+                "cache_read_tokens": cache_read_tokens,
+                "reasoning_tokens": reasoning_tokens,
+                "cost_usd": None,
+                "reasoning_effort": reasoning_effort,
+                "latency_ms": latency_ms,
+                "latency_first_token_ms": latency_first_token_ms,
+                "status": status,
+                "error_code": error_code,
+                "error_message": error_message,
+                "failure_phase": failure_phase,
+                "failure_detail": failure_detail,
+                "failure_exception_type": failure_exception_type,
+                "upstream_status_code": upstream_status_code,
+                "upstream_error_code": upstream_error_code,
+                "bridge_stage": bridge_stage,
+                "upstream_proxy_route_mode": upstream_proxy_route_mode,
+                "upstream_proxy_pool_id": upstream_proxy_pool_id,
+                "upstream_proxy_endpoint_id": upstream_proxy_endpoint_id,
+                "upstream_proxy_fallback_used": upstream_proxy_fallback_used,
+                "upstream_proxy_fail_closed_reason": upstream_proxy_fail_closed_reason,
+                "requested_at": requested_at or utcnow(),
+            }
+            log: RequestLog = _REQUEST_LOG_MANAGER.new_instance()
+            log.__dict__.update(values)
+            cost_usd = (
                 upstream_cost_usd
                 if upstream_cost_usd is not None
                 else calculated_cost_from_log(typing_cast(RequestLogLike, log))
             )
-            self._session.add(log)
+            values["cost_usd"] = cost_usd
+            log.__dict__["cost_usd"] = cost_usd
             try:
-                await self._session.commit()
+                result = await self._session.execute(_INSERT_REQUEST_LOG_STMT, values)
+                log_id = result.scalar_one()
+                log.__dict__["id"] = log_id
                 if parts is not None:
-                    await store_context_parts(self._session, log.id, parts)
+                    await insert_context_parts(self._session, log_id, parts)
+                await self._session.commit()
                 return log
             except sa_exc.ResourceClosedError:
                 return log

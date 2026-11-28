@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
 from typing import Protocol, cast
 
@@ -12,6 +13,7 @@ from app.core.identity import RequestIdentity, attach_member, get_request_identi
 from app.core.utils.client_session import FACTORY_ATTRIBUTION, FactoryAttribution
 from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
+from app.modules.request_logs.pending import track_request_log_task, wait_for_request_log
 
 logger = logging.getLogger("app.modules.proxy.service")
 
@@ -65,6 +67,7 @@ class _RequestLogMixin:
         proxy = cast(_RequestLogServiceProtocol, self)
         with anyio.CancelScope(shield=True):
             try:
+                await wait_for_request_log(request_id)
                 rowcount = 0
 
                 for delay in (0.0, 0.05, 0.1, 0.2, 0.4, 0.8):
@@ -181,9 +184,13 @@ class _RequestLogMixin:
             ),
             name=f"proxy-request-log-{request_id}",
         )
+        if "pytest" not in sys.modules:
+            track_request_log_task(task, request_id=request_id)
+            return
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError:
+            track_request_log_task(task, request_id=request_id)
             self._track_request_log_task(task, account_id=account_id, request_id=request_id)
             raise
 

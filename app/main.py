@@ -68,6 +68,7 @@ from app.modules.quota_planner.scheduler import build_quota_planner_scheduler
 from app.modules.receipts import api as receipts_api
 from app.modules.reports import api as reports_api
 from app.modules.request_logs import api as request_logs_api
+from app.modules.request_logs.pending import drain_request_log_tasks
 from app.modules.routing_policy import api as routing_policy_api
 from app.modules.routing_view import api as routing_view_api
 from app.modules.runtime import api as runtime_api
@@ -326,6 +327,7 @@ async def lifespan(app: FastAPI):
             except Exception:
                 logger.exception("Metrics server failed")
             finally:
+                await drain_request_log_tasks()
                 await node_cache.stop()
                 shutdown_state.reset()
                 mark_process_dead()

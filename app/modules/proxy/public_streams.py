@@ -22,6 +22,27 @@ from app.modules.proxy.stream_replay import (
     response_id_from_event_payload,
     should_buffer_public_pre_created_event,
 )
+from app.modules.proxy.tool_call_dedupe import is_preformatted_text_delta_sse
+
+
+def _delta_key_matches(
+    event_block: str,
+    item_id: str | None,
+    output_index: int | None,
+    item_needles: tuple[str, str] | None,
+    index_needles: tuple[str, str] | None,
+) -> bool:
+    if item_id is None:
+        if '"item_id"' in event_block:
+            return False
+    elif item_needles is None or (item_needles[0] not in event_block and item_needles[1] not in event_block):
+        return False
+    if output_index is None:
+        if '"output_index"' in event_block:
+            return False
+    elif index_needles is None or (index_needles[0] not in event_block and index_needles[1] not in event_block):
+        return False
+    return True
 
 
 async def normalize_public_responses_stream(
@@ -34,6 +55,11 @@ async def normalize_public_responses_stream(
     done_seen = False
     contract_error_kind: str | None = None
     seen_text_delta_keys: set[tuple[str | None, int | None]] = set()
+    last_delta_item_id: str | None = None
+    last_delta_output_index: int | None = None
+    last_delta_item_needles: tuple[str, str] | None = None
+    last_delta_index_needles: tuple[str, str] | None = None
+    has_last_delta_key = False
 
     output_items: dict[int, dict[str, JsonValue]] = {}
 
@@ -63,6 +89,20 @@ async def normalize_public_responses_stream(
             pre_created_buffer.clear()
 
     async for event_block in stream:
+        if (
+            created_emitted
+            and has_last_delta_key
+            and is_preformatted_text_delta_sse(event_block)
+            and _delta_key_matches(
+                event_block,
+                last_delta_item_id,
+                last_delta_output_index,
+                last_delta_item_needles,
+                last_delta_index_needles,
+            )
+        ):
+            yield event_block
+            continue
         if event_block.strip() == "data: [DONE]":
             done_seen = True
             if terminal_seen:
@@ -83,7 +123,20 @@ async def normalize_public_responses_stream(
             and event_block.startswith("event: response.output_text.delta\ndata: ")
             and event_block.endswith("\n\n")
         ):
-            seen_text_delta_keys.add(text_delta_stream_key(payload))
+            delta_key = text_delta_stream_key(payload)
+            seen_text_delta_keys.add(delta_key)
+            last_delta_item_id, last_delta_output_index = delta_key
+            last_delta_item_needles = (
+                (f'"item_id":"{last_delta_item_id}"', f'"item_id": "{last_delta_item_id}"')
+                if last_delta_item_id is not None
+                else None
+            )
+            last_delta_index_needles = (
+                (f'"output_index":{last_delta_output_index}', f'"output_index": {last_delta_output_index}')
+                if last_delta_output_index is not None
+                else None
+            )
+            has_last_delta_key = True
             yield event_block
             continue
         if (

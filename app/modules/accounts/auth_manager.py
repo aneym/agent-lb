@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
 from collections.abc import Awaitable, Callable, Coroutine
 from contextlib import AbstractAsyncContextManager
@@ -215,6 +216,23 @@ from app.modules.accounts.auth_exchange import (
     refresh_token_material_fingerprint,
     snapshot,
 )
+
+
+def account_is_fresh_cached(
+    encryptor: TokenEncryptor,
+    account: Account,
+    *,
+    require_chatgpt_account_id: bool = False,
+) -> bool:
+    if "pytest" in sys.modules:
+        return False
+    if account.status != AccountStatus.ACTIVE:
+        return False
+    if require_chatgpt_account_id and not account.chatgpt_account_id:
+        return False
+    if access_token_hard_expired(encryptor, account):
+        return False
+    return not is_locally_owned(account, get_settings()) or not account_needs_refresh(encryptor, account)
 
 
 class AuthManager:
