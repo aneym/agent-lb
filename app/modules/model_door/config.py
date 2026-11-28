@@ -29,6 +29,7 @@ class DoorConfig:
     seat: str
     pass_ttl_s: float
     log_path: Path
+    owners: frozenset[str]
 
     @classmethod
     def from_env(cls) -> DoorConfig:
@@ -43,4 +44,5 @@ class DoorConfig:
             seat=env("MODEL_DOOR_SEAT", "rails-box"),
             pass_ttl_s=float(env("MODEL_DOOR_PASS_TTL_S", "30")),
             log_path=Path(env("MODEL_DOOR_LOG", str(Path.home() / ".agent-lb-door" / "door.jsonl"))),
+            owners=frozenset(o.strip() for o in env("MODEL_DOOR_OWNERS", "").split(",") if o.strip()),
         )

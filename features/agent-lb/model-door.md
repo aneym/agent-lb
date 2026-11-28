@@ -20,3 +20,4 @@ Point Claude Code at the door: `ANTHROPIC_BASE_URL=<door>` and `ANTHROPIC_AUTH_T
 
 ## Gotchas
 The door reads the Rails relay key from agent-secret `rails-one-relay-key` at start. The pool still needs Claude Code's own system identity in the request, as agent-lb does for every Claude subscription call.
+The door serves only pass owners listed in `MODEL_DOOR_OWNERS` (comma-separated Rails account ids), set to the operator's own account in the unit's drop-in; left empty it refuses every pass. Claude subscription seats never serve another person's account.

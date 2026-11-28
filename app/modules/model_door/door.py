@@ -97,6 +97,9 @@ class Door:
                 "authentication_error",
                 "This model pass is not live: it is unknown, expired or revoked. Ask Rails for a new one.",
             )
+        if box_pass.owner not in self.config.owners:
+            self.log({"refused": "owner", "box": box_pass.box, "agent": box_pass.agent, "owner": box_pass.owner})
+            return _error(403, "permission_error", "This door serves only the operator's own accounts.")
         if not is_claude_code_client(_client_group(request)):
             self.log({"refused": "client", "box": box_pass.box, "agent": box_pass.agent})
             return _error(403, "permission_error", CLAUDE_CODE_ONLY_MESSAGE)
