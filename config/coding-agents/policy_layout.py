@@ -276,6 +276,8 @@ DISPATCH_DROPPED = {
     "a23a29c251219671107cbbb6d606dec7e08c709a42625b2953a0ce009a910f66": "land-open-guard.py",
     "ce0d9c515ec1f3a44ac8e76013bfaf95e982e96616003d99bb508b585fed441b": "stash-guard from the engine",
     "ef0e21887ae72a362a207bcb2335c79c876dcedb86a24ea4197e1f20432fe404": "kill-scope-guard",
+    "449b292af3c96cab225792b4edb883eaa6e3340d05852443434cb38eb99192fb": "gh-write-guard",
+    "2a6154d25c839667fb5f361429ae3ca2637fed3264b2e93ccf2a4988fb56799b": "gh-write-guard --session-env",
     "7ab2e1c9f78c8612ce76e2e798a80ca2021cb1a32215e86506e566fd53612806": "wrapped agent-home-hooks.py SessionStart",
     "16ae92b6d915efb6581615166d4b7ebc8271898a8f1a2847a831dbcfdeef33c5": "wrapped agent-home-hooks.py UserPromptSubmit",
     "1dae7f41eadd5133a07b15d9e682d1adfea44e531b9152f9240f16532f821b19": "wrapped agent-home-hooks.py PreToolUse",

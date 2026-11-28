@@ -16,7 +16,6 @@ FLOOR_HOOKS = {
     "agent-lb-bootout-guard.sh": "his accounts: the account store is never booted out",
     "dangerous-command-guard.sh": "destructive data: dangerous shell commands blocked",
     "host-credential-guard.py": "secrets: host credential files never read",
-    "gh-write-guard.py": "git: no gh writes",
     "user-manager-guard.py": "destructive: protected processes",
     "desktop-guard": "real people, his accounts and spend: agents stay off his desktop, where those happen",
     "wide-scan-guard.sh": "secrets: no recursive reads that print secrets",
@@ -29,7 +28,7 @@ FLOOR_HOOKS = {
 }
 NON_FLOOR_GUARDS = {
     "t3-live-restart-guard.py": "house rule: live T3 restarts use the nightly installer",
-    "merge-gate-guard.py": "house rule, warn only: agent-rails main lands through studio_merge; gh-write-guard keeps the git floor on gh pr merge",
+    "merge-gate-guard.py": "house rule, warn only: agent-rails main lands through studio_merge",
     "seat-guard.py": "seat routing advice, not a kept floor",
     "upload-cap-guard.py": "house rule: bulk uploads off Studio are rate capped and run overnight",
     "stop-by-name-guard.py": "house rule: processes stop by the id recorded at start, never by name",

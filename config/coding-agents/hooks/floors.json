@@ -1,8 +1,6 @@
 {
   "floors": [
-    {"harness": "claude", "event": "SessionStart", "matcher": null, "file": "gh-write-guard.py", "args": ["--session-env"], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "branch-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
-    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "gh-write-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "stash-guard", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "rm-dynamic-deny", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "dangerous-command-guard.sh", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
@@ -24,7 +22,6 @@
     {"harness": "codex", "event": "PreToolUse", "matcher": "apply_patch", "file": "hooks-off-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "codex", "event": "PreToolUse", "matcher": "Bash", "file": "wide-scan-guard.sh", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "codex", "event": "PreToolUse", "matcher": "Bash", "file": "outbound-send-guard.py", "args": [], "timeout": 15, "os": ["linux", "darwin"]},
-    {"harness": "codex", "event": "PreToolUse", "matcher": "Bash", "file": "gh-write-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "codex", "event": "PreToolUse", "matcher": "Bash", "file": "stash-guard", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "codex", "event": "PreToolUse", "matcher": "Bash", "file": "rm-dynamic-deny", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "codex", "event": "PreToolUse", "matcher": "Bash", "file": "dangerous-command-guard.sh", "args": [], "timeout": 10, "os": ["linux", "darwin"]},

@@ -13,6 +13,8 @@ DEFAULT_TIMEOUT = 3.0
 FLOOR_TIMEOUT = 2.5
 RETIRED_GUARDS = {
     "ef0e21887ae72a362a207bcb2335c79c876dcedb86a24ea4197e1f20432fe404": "kill-scope-guard",
+    "449b292af3c96cab225792b4edb883eaa6e3340d05852443434cb38eb99192fb": "gh-write-guard",
+    "2a6154d25c839667fb5f361429ae3ca2637fed3264b2e93ccf2a4988fb56799b": "gh-write-guard --session-env",
 }
 
 SHELL = "/bin/sh"

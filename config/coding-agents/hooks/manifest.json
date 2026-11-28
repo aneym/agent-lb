@@ -2,16 +2,6 @@
   "owner": "agent-lb",
   "hooks": [
     {
-      "event": "SessionStart",
-      "matcher": null,
-      "hook": {
-        "type": "command",
-        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\" --session-env",
-        "timeout": 10
-      },
-      "needs_source": true
-    },
-    {
       "event": "PreToolUse",
       "matcher": "Bash",
       "hook": {
@@ -77,16 +67,6 @@
       "hook": {
         "type": "command",
         "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
-        "timeout": 10
-      },
-      "needs_source": true
-    },
-    {
-      "event": "PreToolUse",
-      "matcher": "Bash",
-      "hook": {
-        "type": "command",
-        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
         "timeout": 10
       },
       "needs_source": true

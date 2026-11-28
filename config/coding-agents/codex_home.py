@@ -14,7 +14,10 @@ OFFLOAD_COMMAND = (
     '[ -x "$P" ] || P=python3; if [ -r "$H" ]; then exec "$P" "$H"; fi'
 )
 BRANCH_GUARD_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/branch-guard.py"'
-RETIRED_COMMANDS = ('/usr/bin/python3 "$HOME/.claude/hooks/kill-scope-guard.py"',)
+RETIRED_COMMANDS = (
+    '/usr/bin/python3 "$HOME/.claude/hooks/kill-scope-guard.py"',
+    '/usr/bin/python3 "$HOME/.claude/hooks/gh-write-guard.py"',
+)
 HOOKS_OFF_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/hooks-off-guard.py"'
 WALK_GUARD_COMMAND = '/bin/bash "$HOME/.claude/hooks/wide-scan-guard.sh" --block-walks'
 OUTBOUND_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/outbound-send-guard.py"'
@@ -32,7 +35,6 @@ BRIDGE_RESTART_COMMAND = (
     'G="$HOME/.claude/hooks/bridge-restart-guard.py"; if [ -r "$G" ]; then exec /usr/bin/python3 "$G" codex; fi; exit 0'
 )
 PY_FLOOR_HOOKS = (
-    "gh-write-guard.py",
     "stash-guard",
     "rm-dynamic-deny",
     "user-manager-guard.py",
