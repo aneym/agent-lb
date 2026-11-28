@@ -14,8 +14,10 @@ from app.modules.proxy.gemini_stream import (
     JSON_ARRAY_EMPTY,
     JSON_ARRAY_END,
     GeminiResponseAggregate,
+    GeminiResponseMetadata,
     GeminiUsage,
     json_array_item,
+    metadata_from_chunk,
     sse_event,
     usage_from_chunk,
 )
@@ -35,12 +37,14 @@ async def _chunks(attempt: GeminiAttempt) -> AsyncIterator[dict[str, Any]]:
 
 async def stream_bytes(gateway: GeminiGateway, attempt: GeminiAttempt, *, sse: bool) -> AsyncGenerator[bytes, None]:
     usage: GeminiUsage | None = None
+    metadata = GeminiResponseMetadata()
     error: GeminiUpstreamError | None = None
     cancelled = False
     first = True
     try:
         async for chunk in _chunks(attempt):
             usage = usage_from_chunk(chunk) or usage
+            metadata = metadata_from_chunk(chunk, metadata)
             yield sse_event(chunk) if sse else json_array_item(chunk, first=first)
             first = False
     except (asyncio.CancelledError, GeneratorExit):
@@ -56,29 +60,31 @@ async def stream_bytes(gateway: GeminiGateway, attempt: GeminiAttempt, *, sse: b
             first = False
     finally:
         with CancelScope(shield=True):
-            await gateway.finish(attempt, usage, error=error, cancelled=cancelled)
+            await gateway.finish(attempt, usage, error=error, cancelled=cancelled, metadata=metadata)
     if not sse:
         yield JSON_ARRAY_EMPTY if first else JSON_ARRAY_END
 
 
 async def collect_response(gateway: GeminiGateway, attempt: GeminiAttempt) -> dict[str, Any]:
     usage: GeminiUsage | None = None
+    metadata = GeminiResponseMetadata()
     aggregate = GeminiResponseAggregate()
     try:
         async for chunk in _chunks(attempt):
             usage = usage_from_chunk(chunk) or usage
+            metadata = metadata_from_chunk(chunk, metadata)
             aggregate.add(chunk)
     except (asyncio.CancelledError, GeneratorExit):
         with CancelScope(shield=True):
-            await gateway.finish(attempt, usage, cancelled=True)
+            await gateway.finish(attempt, usage, cancelled=True, metadata=metadata)
         raise
     except Exception as exc:
         error = exc if isinstance(exc, GeminiUpstreamError) else _stream_failure()
         with CancelScope(shield=True):
-            await gateway.finish(attempt, usage, error=error)
+            await gateway.finish(attempt, usage, error=error, metadata=metadata)
         raise GeminiGatewayError(error.status_code, error.message, code=f"upstream_{error.kind}") from exc
     with CancelScope(shield=True):
-        await gateway.finish(attempt, usage)
+        await gateway.finish(attempt, usage, metadata=metadata)
     return aggregate.response()
 
 

@@ -47,8 +47,7 @@ from app.core.openai.model_registry import get_model_registry
 from app.core.plan_types import account_plan_matches_allowed, normalize_account_plan_type
 from app.core.providers import OPENAI_PROVIDER_NAME, normalize_provider_name
 from app.core.resilience.circuit_breaker import are_all_account_circuit_breakers_open
-from app.core.resilience.degradation import get_status as get_degradation_status
-from app.core.resilience.degradation import set_degraded, set_normal
+from app.core.resilience.degradation import format_degraded_error_message, set_degraded, set_normal
 from app.core.usage.quota import _has_usable_credits, apply_usage_quota
 from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
@@ -402,13 +401,13 @@ class LoadBalancer:
             return selection_inputs
 
         selection_inputs = await load_selection_inputs()
-        circuit_breaker_open = _is_upstream_circuit_breaker_open()
-        if circuit_breaker_open:
-            set_degraded("upstream circuit breaker is open")
-        elif selection_inputs.accounts:
-            set_normal()
-        elif selection_inputs.error_code is not None:
-            set_normal()
+        if _is_upstream_circuit_breaker_open(
+            provider=provider_name,
+            account_ids=[a.id for a in selection_inputs.accounts],
+        ):
+            set_degraded("upstream circuit breaker is open", provider=provider_name)
+        elif selection_inputs.accounts or selection_inputs.error_code is not None:
+            set_normal(provider=provider_name)
         if selection_inputs.error_code is not None and not selection_inputs.accounts:
             return AccountSelection(
                 account=None,
@@ -792,7 +791,6 @@ class LoadBalancer:
                 model,
                 error_message,
             )
-        if selected_snapshot is None:
             if traffic_class == TRAFFIC_CLASS_OPPORTUNISTIC and error_message:
                 return AccountSelection(
                     account=None,
@@ -800,8 +798,8 @@ class LoadBalancer:
                     error_code=OPPORTUNISTIC_BURN_WINDOW_CLOSED,
                 )
             if error_message == "No available accounts":
-                set_degraded("all upstream accounts are unavailable")
-                error_message = _format_degraded_error_message(error_message)
+                set_degraded("all upstream accounts are unavailable", provider=provider_name)
+                error_message = format_degraded_error_message(error_message, provider=provider_name)
             return AccountSelection(
                 account=None,
                 error_message=error_message,
@@ -2386,15 +2384,10 @@ def _additional_quota_eligibility(
     return "eligible"
 
 
-def _is_upstream_circuit_breaker_open() -> bool:
-    settings = get_settings()
-    if not getattr(settings, "circuit_breaker_enabled", False):
+def _is_upstream_circuit_breaker_open(
+    provider: str | None = None,
+    account_ids: Iterable[str] | None = None,
+) -> bool:
+    if not getattr(get_settings(), "circuit_breaker_enabled", False):
         return False
-    return are_all_account_circuit_breakers_open()
-
-
-def _format_degraded_error_message(message: str | None) -> str:
-    degradation_status = get_degradation_status()
-    reason = degradation_status.get("reason") or "upstream capacity is currently unavailable"
-    base_message = message or "Upstream unavailable"
-    return f"{base_message}. Service is operating in degraded mode: {reason}"
+    return are_all_account_circuit_breakers_open(provider=provider, account_ids=account_ids)

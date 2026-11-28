@@ -14,6 +14,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core.clients.failure_observation import observation, observe_status, observe_text
+from app.core.config.settings import get_settings
 from app.core.routing_table import read_routing_table
 from app.core.utils.client_session import reset_caller_seat, set_caller_seat
 
@@ -272,6 +273,31 @@ def _session_id(request: Request) -> str | None:
     return request.headers.get("x-tbh-session-id") or request.headers.get("session_id")
 
 
+_SHARED_HTTP_CLIENT: httpx.AsyncClient | None = None
+
+
+def _http_client() -> httpx.AsyncClient:
+    global _SHARED_HTTP_CLIENT
+    if _SHARED_HTTP_CLIENT is None or _SHARED_HTTP_CLIENT.is_closed:
+        limit = get_settings().http_connector_limit
+        _SHARED_HTTP_CLIENT = httpx.AsyncClient(
+            limits=httpx.Limits(
+                max_connections=max(100, limit),
+                max_keepalive_connections=min(256, max(20, limit // 4)),
+            ),
+            timeout=httpx.Timeout(connect=15.0, read=300.0, write=60.0, pool=15.0),
+        )
+    return _SHARED_HTTP_CLIENT
+
+
+async def close_http_client() -> None:
+    global _SHARED_HTTP_CLIENT
+    client = _SHARED_HTTP_CLIENT
+    _SHARED_HTTP_CLIENT = None
+    if client is not None and not client.is_closed:
+        await client.aclose()
+
+
 async def _relay(
     request: Request,
     path: str,
@@ -283,7 +309,7 @@ async def _relay(
     seat: str | None = None,
 ) -> StreamingResponse | JSONResponse:
     started = time.monotonic()
-    client = httpx.AsyncClient(timeout=httpx.Timeout(connect=15.0, read=None, write=60.0, pool=15.0))
+    client = _http_client()
 
     async def send(send_headers: dict[str, str]) -> httpx.Response:
         upstream = client.build_request(
@@ -299,7 +325,6 @@ async def _relay(
                 await response.aclose()
                 response = await send({**headers, "authorization": authorization})
     except httpx.HTTPError as exc:
-        await client.aclose()
         if path == "responses":
             await _log_call(
                 model=model,
@@ -332,7 +357,6 @@ async def _relay(
             raise
         finally:
             await response.aclose()
-            await client.aclose()
             if path == "responses":
                 await _log_call(
                     model=model,

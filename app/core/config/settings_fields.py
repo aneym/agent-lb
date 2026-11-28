@@ -305,7 +305,7 @@ class SettingsFields(BaseSettings):
     leader_election_enabled: bool = False
     leader_election_ttl_seconds: int = 600
 
-    circuit_breaker_enabled: bool = False
+    circuit_breaker_enabled: bool = True
     circuit_breaker_failure_threshold: int = 5
     circuit_breaker_recovery_timeout_seconds: int = 60
 

@@ -115,7 +115,7 @@ def _kind(status: int, error: dict[str, Any], message: str, reset_at: float | No
         if "QUOTA_EXHAUSTED" in reasons or _daily_quota(error) or long_wait:
             return "quota"
         return "rate_limit"
-    if status in (400, 404, 409, 413):
+    if 400 <= status < 500 and status not in (401, 403, 408, 429):
         return "invalid_request"
     return "transient"
 

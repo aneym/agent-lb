@@ -49,6 +49,11 @@ from app.core.openai.parsing import parse_sse_event_payload
 from app.core.openai.requests import (
     ResponsesRequest,
 )
+from app.core.openai.response_observability import (
+    OpenAIResponseMetadata,
+    extract_openai_response_metadata,
+    observe_openai_response,
+)
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError
 from app.core.utils.request_id import get_request_id
 from app.core.utils.sse import CODEX_KEEPALIVE_FRAME as CODEX_KEEPALIVE_FRAME  # noqa: F401
@@ -70,81 +75,6 @@ from app.modules.proxy._service.compact import (
 )
 from app.modules.proxy._service.compact import (
     _sticky_key_from_compact_payload as _sticky_key_from_compact_payload,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _active_http_bridge_instance_ring as _active_http_bridge_instance_ring,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _build_http_bridge_prewarm_text as _build_http_bridge_prewarm_text,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _durable_bridge_lookup_active_owner as _durable_bridge_lookup_active_owner,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _durable_bridge_lookup_allows_local_reuse as _durable_bridge_lookup_allows_local_reuse,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _effective_http_bridge_idle_ttl_seconds as _effective_http_bridge_idle_ttl_seconds,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _forwarded_http_bridge_session_key as _forwarded_http_bridge_session_key,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _has_http_bridge_response_output_marker as _has_http_bridge_response_output_marker,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_allow_durable_takeover as _http_bridge_allow_durable_takeover,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_can_local_recover_without_ring as _http_bridge_can_local_recover_without_ring,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_can_recover_during_drain as _http_bridge_can_recover_during_drain,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_continuity_lost_error_envelope as _http_bridge_continuity_lost_error_envelope,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_durable_lease_ttl_seconds as _http_bridge_durable_lease_ttl_seconds,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_endpoint_matches_current_instance as _http_bridge_endpoint_matches_current_instance,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_eviction_priority as _http_bridge_eviction_priority,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_has_durable_recovery_anchor as _http_bridge_has_durable_recovery_anchor,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_input_item_type as _http_bridge_input_item_type,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_is_context_overflow_error as _http_bridge_is_context_overflow_error,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_is_previous_response_owner_unavailable as _http_bridge_is_previous_response_owner_unavailable,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_key_strength as _http_bridge_key_strength,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_owner_check_required as _http_bridge_owner_check_required,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_owner_instance as _http_bridge_owner_instance,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_owner_lookup_unavailable_error_envelope as _http_bridge_owner_lookup_unavailable_error_envelope,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_payload_looks_like_full_resend as _http_bridge_payload_looks_like_full_resend,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_payload_without_previous_response_id as _http_bridge_payload_without_previous_response_id,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_precreated_retry_failure_error as _http_bridge_precreated_retry_failure_error,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_previous_response_alias_key as _http_bridge_previous_response_alias_key,
@@ -417,6 +347,7 @@ def _facade() -> Any:
 
 
 _REQUEST_TRANSPORT_HTTP = "http"
+_OBS_EVENTS = frozenset({"response.created", "response.completed", "response.incomplete", "response.failed"})
 
 
 class _StreamingMixin(_StreamingRetryMixin):
@@ -529,6 +460,7 @@ class _StreamingMixin(_StreamingRetryMixin):
         failure_metadata = _RequestLogFailureMetadata()
         response_id = request_id
         usage = None
+        obs = OpenAIResponseMetadata()
         route: ResolvedUpstreamRoute | None = None
         route_trace = UpstreamProxyRouteTrace()
         route_fail_closed_reason: str | None = None
@@ -638,6 +570,10 @@ class _StreamingMixin(_StreamingRetryMixin):
             first_payload = parse_sse_data_json(first)
             event = parse_sse_event_payload(first_payload)
             event_type = _event_type_from_payload(event, first_payload)
+            if event_type in _OBS_EVENTS:
+                obs = extract_openai_response_metadata(
+                    event.response if event else None, raw_payload=first_payload, current=obs
+                )
             if event_type not in {"response.completed", "response.failed", "response.incomplete", "error"}:
                 api_key_reservation_touch_state.last_touch_at = await proxy._maybe_touch_api_key_reservation(
                     api_key=api_key,
@@ -769,6 +705,10 @@ class _StreamingMixin(_StreamingRetryMixin):
                 ev_payload = parse_sse_data_json(line)
                 event = parse_sse_event_payload(ev_payload)
                 event_type = _event_type_from_payload(event, ev_payload)
+                if event_type in _OBS_EVENTS:
+                    obs = extract_openai_response_metadata(
+                        event.response if event else None, raw_payload=ev_payload, current=obs
+                    )
                 if event_type == "error" and (event is None or event.error is None) and isinstance(ev_payload, dict):
                     message_value = ev_payload.get("message")
                     message = (
@@ -997,6 +937,12 @@ class _StreamingMixin(_StreamingRetryMixin):
                 if route_trace.endpoint_id is not None
                 else (False if route is not None else None)
             )
+            observe_openai_response(
+                request_id=response_id,
+                account_id=account_id_value,
+                requested_model=model,
+                metadata=obs,
+            )
             await proxy._write_request_log(
                 identity=request_identity,
                 account_id=account_id_value,
@@ -1031,6 +977,9 @@ class _StreamingMixin(_StreamingRetryMixin):
                 upstream_proxy_fail_closed_reason=route_fail_closed_reason,
                 useragent=useragent,
                 useragent_group=useragent_group,
+                response_model=obs.response_model,
+                stop_reason=obs.stop_reason,
+                stop_details_category=obs.stop_details_category,
             )
             _maybe_log_proxy_service_tier_trace(
                 "stream",

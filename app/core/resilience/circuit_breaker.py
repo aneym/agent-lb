@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Iterable
 from enum import Enum
-from typing import Awaitable, TypeVar
+from typing import TypeVar
 
 import aiohttp
 
@@ -83,6 +84,12 @@ class CircuitBreaker:
             if is_probe:
                 await self.release_half_open_probe()
 
+    async def record_success(self) -> None:
+        await self._record_success()
+
+    async def record_failure(self, exc: Exception) -> None:
+        await self._record_failure(exc)
+
     async def _record_success(self) -> None:
         async with self._lock:
             if self.state == CircuitState.HALF_OPEN:
@@ -109,17 +116,26 @@ class CircuitBreaker:
 def _is_server_error(exc: Exception) -> bool:
     if isinstance(exc, aiohttp.ClientResponseError):
         return exc.status >= 500
-    if isinstance(exc, (asyncio.TimeoutError, aiohttp.ServerTimeoutError)):
+    if isinstance(exc, (asyncio.TimeoutError, aiohttp.ServerTimeoutError, aiohttp.ClientConnectionError, OSError)):
         return True
 
     status_code = getattr(exc, "status_code", None)
-    if status_code is not None:
+    if isinstance(status_code, int) and not isinstance(status_code, bool):
         return status_code >= 500
+
+    status = getattr(exc, "status", None)
+    if isinstance(status, int) and not isinstance(status, bool):
+        return status >= 500
+
     return True
 
 
+def _normalize_provider(provider: str | None) -> str:
+    return (provider or "openai").strip().lower() or "openai"
+
+
 _circuit_breaker: CircuitBreaker | None = None
-_account_circuit_breakers: dict[str, CircuitBreaker] = {}
+_account_circuit_breakers: dict[str, dict[str, CircuitBreaker]] = {}
 
 
 def get_circuit_breaker(settings: Settings | None = None) -> CircuitBreaker | None:
@@ -141,22 +157,94 @@ def get_circuit_breaker(settings: Settings | None = None) -> CircuitBreaker | No
 def get_circuit_breaker_for_account(
     account_id: str,
     settings: Settings,
+    *,
+    provider: str = "openai",
 ) -> CircuitBreaker | None:
     enabled = getattr(settings, "circuit_breaker_enabled", False)
     if not enabled:
         return None
 
-    breaker = _account_circuit_breakers.get(account_id)
+    provider_breakers = _account_circuit_breakers.setdefault(_normalize_provider(provider), {})
+    breaker = provider_breakers.get(account_id)
     if breaker is None:
         breaker = CircuitBreaker(
             failure_threshold=getattr(settings, "circuit_breaker_failure_threshold", 5),
             recovery_timeout_seconds=getattr(settings, "circuit_breaker_recovery_timeout_seconds", 60),
         )
-        _account_circuit_breakers[account_id] = breaker
+        provider_breakers[account_id] = breaker
     return breaker
 
 
-def are_all_account_circuit_breakers_open() -> bool:
-    if not _account_circuit_breakers:
+async def record_account_circuit_success(
+    account_id: str,
+    settings: Settings,
+    *,
+    provider: str = "openai",
+) -> None:
+    breaker = get_circuit_breaker_for_account(account_id, settings, provider=provider)
+    if breaker is not None:
+        await breaker.record_success()
+
+
+async def record_account_circuit_failure(
+    account_id: str,
+    exc: Exception,
+    settings: Settings,
+    *,
+    provider: str = "openai",
+) -> None:
+    breaker = get_circuit_breaker_for_account(account_id, settings, provider=provider)
+    if breaker is not None:
+        await breaker.record_failure(exc)
+
+
+def is_account_circuit_open(
+    account_id: str,
+    settings: Settings,
+    *,
+    provider: str = "openai",
+) -> bool:
+    if not getattr(settings, "circuit_breaker_enabled", False):
         return False
-    return all(cb.state == CircuitState.OPEN for cb in _account_circuit_breakers.values())
+    breaker = _account_circuit_breakers.get(_normalize_provider(provider), {}).get(account_id)
+    return breaker is not None and breaker.state == CircuitState.OPEN
+
+
+def clear_account_circuit_breakers(provider: str | None = None) -> None:
+    if provider is None:
+        _account_circuit_breakers.clear()
+        return
+    _account_circuit_breakers.pop(_normalize_provider(provider), None)
+
+
+def are_all_account_circuit_breakers_open(
+    *,
+    provider: str | None = None,
+    account_ids: Iterable[str] | None = None,
+) -> bool:
+    if provider is not None:
+        scoped = _account_circuit_breakers.get(_normalize_provider(provider), {})
+        if account_ids is not None:
+            ids = set(account_ids)
+            if not ids:
+                return False
+            return all(
+                (cb := scoped.get(account_id)) is not None and cb.state == CircuitState.OPEN for account_id in ids
+            )
+        return bool(scoped) and all(cb.state == CircuitState.OPEN for cb in scoped.values())
+
+    if account_ids is not None:
+        ids = set(account_ids)
+        if not ids:
+            return False
+        merged: dict[str, list[CircuitBreaker]] = {}
+        for provider_breakers in _account_circuit_breakers.values():
+            for account_id, cb in provider_breakers.items():
+                merged.setdefault(account_id, []).append(cb)
+        return all(
+            bool(cbs := merged.get(account_id)) and all(cb.state == CircuitState.OPEN for cb in cbs)
+            for account_id in ids
+        )
+
+    all_breakers = [cb for provider_breakers in _account_circuit_breakers.values() for cb in provider_breakers.values()]
+    return bool(all_breakers) and all(cb.state == CircuitState.OPEN for cb in all_breakers)

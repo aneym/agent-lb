@@ -417,7 +417,10 @@ class Settings(SettingsFields):
             self.bulkhead_proxy_websocket_limit = self.bulkhead_proxy_limit
         if self.bulkhead_proxy_compact_limit is None:
             http_limit = self.bulkhead_proxy_http_limit
-            self.bulkhead_proxy_compact_limit = 0 if http_limit <= 0 else min(http_limit, 16)
+            compact_default = (
+                self.proxy_compact_response_create_limit if self.proxy_compact_response_create_limit > 0 else http_limit
+            )
+            self.bulkhead_proxy_compact_limit = 0 if http_limit <= 0 else min(http_limit, compact_default)
         return self
 
     @model_validator(mode="after")

@@ -80,13 +80,26 @@ class ResponseUsage(BaseModel):
     output_tokens_details: ResponseUsageDetails | None = None
 
 
+class IncompleteDetails(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    reason: StrictStr | None = None
+
+
 class OpenAIResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: StrictStr | None = None
+    model: StrictStr | None = None
     status: StrictStr | None = None
+    incomplete_details: IncompleteDetails | None = None
     error: OpenAIError | None = None
     usage: ResponseUsage | None = None
+
+    @field_validator("incomplete_details", mode="before")
+    @classmethod
+    def _normalize_incomplete_details(cls, value: ModelLikeInput | None) -> IncompleteDetails | None:
+        return _normalize_model_value(IncompleteDetails, value)
 
     @field_validator("error", mode="before")
     @classmethod
@@ -116,9 +129,16 @@ class OpenAIResponsePayload(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     id: StrictStr | None = None
+    model: StrictStr | None = None
     status: StrictStr | None = None
+    incomplete_details: IncompleteDetails | None = None
     error: OpenAIError | None = None
     usage: ResponseUsage | None = None
+
+    @field_validator("incomplete_details", mode="before")
+    @classmethod
+    def _normalize_incomplete_details(cls, value: ModelLikeInput | None) -> IncompleteDetails | None:
+        return _normalize_model_value(IncompleteDetails, value)
 
     @field_validator("error", mode="before")
     @classmethod
@@ -136,7 +156,9 @@ class CompactResponsePayload(BaseModel):
 
     object: StrictStr
     id: StrictStr | None = None
+    model: StrictStr | None = None
     status: StrictStr | None = None
+    incomplete_details: IncompleteDetails | None = None
     error: OpenAIError | None = None
     usage: ResponseUsage | None = None
 
@@ -149,6 +171,11 @@ class CompactResponsePayload(BaseModel):
         if not normalized.startswith("response.compact"):
             raise ValueError("Compact response payload requires a compact object discriminator")
         return normalized
+
+    @field_validator("incomplete_details", mode="before")
+    @classmethod
+    def _normalize_incomplete_details(cls, value: ModelLikeInput | None) -> IncompleteDetails | None:
+        return _normalize_model_value(IncompleteDetails, value)
 
     @field_validator("error", mode="before")
     @classmethod

@@ -128,6 +128,9 @@ class _RequestLogMixin:
         useragent_group: str | None = None,
         identity: RequestIdentity | None = None,
         factory_attribution: FactoryAttribution | None = None,
+        response_model: str | None = None,
+        stop_reason: str | None = None,
+        stop_details_category: str | None = None,
     ) -> None:
         task = asyncio.create_task(
             self._persist_request_log(
@@ -170,6 +173,9 @@ class _RequestLogMixin:
                 upstream_proxy_fail_closed_reason=upstream_proxy_fail_closed_reason,
                 useragent=useragent,
                 useragent_group=useragent_group,
+                response_model=response_model,
+                stop_reason=stop_reason,
+                stop_details_category=stop_details_category,
             ),
             name=f"proxy-request-log-{request_id}",
         )
@@ -249,6 +255,9 @@ class _RequestLogMixin:
         upstream_proxy_fail_closed_reason: str | None = None,
         useragent: str | None = None,
         useragent_group: str | None = None,
+        response_model: str | None = None,
+        stop_reason: str | None = None,
+        stop_details_category: str | None = None,
     ) -> None:
         proxy = cast(_RequestLogServiceProtocol, self)
         try:
@@ -291,6 +300,9 @@ class _RequestLogMixin:
                     upstream_proxy_fail_closed_reason=upstream_proxy_fail_closed_reason,
                     useragent=useragent,
                     useragent_group=useragent_group,
+                    response_model=response_model,
+                    stop_reason=stop_reason,
+                    stop_details_category=stop_details_category,
                 )
         except Exception:
             logger.warning(

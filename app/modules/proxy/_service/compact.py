@@ -24,6 +24,7 @@ from app.core.config.settings_cache import get_settings_cache
 from app.core.errors import openai_error
 from app.core.openai.models import CompactResponsePayload
 from app.core.openai.requests import ResponsesCompactRequest
+from app.core.openai.response_observability import extract_openai_response_metadata, observe_openai_response
 from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError
 from app.core.utils.request_id import ensure_request_id, get_request_id
@@ -402,6 +403,15 @@ class _CompactMixin:
         file_preferred_account_id = rewritten_file_account_id
         if file_preferred_account_id is None:
             file_preferred_account_id = await proxy._resolve_file_account_for_responses(payload, headers)
+
+        async def _release_compact_usage() -> None:
+            await proxy._settle_compact_api_key_usage(
+                api_key=api_key,
+                api_key_reservation=api_key_reservation,
+                response=None,
+                request_service_tier=request_service_tier,
+            )
+
         try:
 
             async def _call_compact(
@@ -605,12 +615,7 @@ class _CompactMixin:
                     except ProxyResponseError as exc:
                         compact_continuity_error = _compact_previous_response_not_found_error(exc)
                         if compact_continuity_error is not None:
-                            await proxy._settle_compact_api_key_usage(
-                                api_key=api_key,
-                                api_key_reservation=api_key_reservation,
-                                response=None,
-                                request_service_tier=request_service_tier,
-                            )
+                            await _release_compact_usage()
                             _record_continuity_fail_closed(
                                 surface="compact",
                                 reason="previous_response_not_found",
@@ -624,12 +629,7 @@ class _CompactMixin:
                                 try:
                                     await proxy._handle_proxy_error(account, exc)
                                 except Exception:
-                                    await proxy._settle_compact_api_key_usage(
-                                        api_key=api_key,
-                                        api_key_reservation=api_key_reservation,
-                                        response=None,
-                                        request_service_tier=request_service_tier,
-                                    )
+                                    await _release_compact_usage()
                                     raise
                                 last_exc = exc
                                 excluded_account_ids.add(account.id)
@@ -653,12 +653,7 @@ class _CompactMixin:
                             except RefreshError as refresh_exc:
                                 if refresh_exc.is_permanent:
                                     await proxy._load_balancer.mark_permanent_failure(account, refresh_exc.code)
-                                await proxy._settle_compact_api_key_usage(
-                                    api_key=api_key,
-                                    api_key_reservation=api_key_reservation,
-                                    response=None,
-                                    request_service_tier=request_service_tier,
-                                )
+                                await _release_compact_usage()
                                 raise exc
                             except (aiohttp.ClientError, asyncio.TimeoutError) as timeout_exc:
                                 message = str(timeout_exc) or "Request to upstream timed out"
@@ -669,20 +664,10 @@ class _CompactMixin:
                                     exc_info=True,
                                 )
                                 if not _should_retry_transient_stream_error("upstream_unavailable", message):
-                                    await proxy._settle_compact_api_key_usage(
-                                        api_key=api_key,
-                                        api_key_reservation=api_key_reservation,
-                                        response=None,
-                                        request_service_tier=request_service_tier,
-                                    )
+                                    await _release_compact_usage()
                                     _raise_proxy_unavailable(message)
                                 if file_preferred_account_id is not None:
-                                    await proxy._settle_compact_api_key_usage(
-                                        api_key=api_key,
-                                        api_key_reservation=api_key_reservation,
-                                        response=None,
-                                        request_service_tier=request_service_tier,
-                                    )
+                                    await _release_compact_usage()
                                     _raise_proxy_unavailable(message)
                                 await proxy._handle_stream_error(
                                     account,
@@ -748,12 +733,7 @@ class _CompactMixin:
                                 require_security_work_authorized = True
                                 transient_exhausted = True
                                 break
-                            await proxy._settle_compact_api_key_usage(
-                                api_key=api_key,
-                                api_key_reservation=api_key_reservation,
-                                response=None,
-                                request_service_tier=request_service_tier,
-                            )
+                            await _release_compact_usage()
                             raise
                         if code == "account_response_create_cap":
                             last_exc = exc
@@ -761,12 +741,7 @@ class _CompactMixin:
                             transient_exhausted = True
                             break
                         if _is_account_neutral_error_code(code):
-                            await proxy._settle_compact_api_key_usage(
-                                api_key=api_key,
-                                api_key_reservation=api_key_reservation,
-                                response=None,
-                                request_service_tier=request_service_tier,
-                            )
+                            await _release_compact_usage()
                             raise
                         classified = await proxy._handle_stream_error(
                             account,
@@ -796,22 +771,12 @@ class _CompactMixin:
                             excluded_account_ids.add(account.id)
                             transient_exhausted = True
                             break
-                        await proxy._settle_compact_api_key_usage(
-                            api_key=api_key,
-                            api_key_reservation=api_key_reservation,
-                            response=None,
-                            request_service_tier=request_service_tier,
-                        )
+                        await _release_compact_usage()
                         raise
                 if transient_exhausted:
                     continue
 
-            await proxy._settle_compact_api_key_usage(
-                api_key=api_key,
-                api_key_reservation=api_key_reservation,
-                response=None,
-                request_service_tier=request_service_tier,
-            )
+            await _release_compact_usage()
             if last_exc is not None:
                 raise last_exc
             raise ProxyResponseError(
@@ -831,12 +796,7 @@ class _CompactMixin:
             route_fail_closed_reason = exc.reason
             log_error_code = "upstream_proxy_unavailable"
             log_error_message = exc.reason
-            await proxy._settle_compact_api_key_usage(
-                api_key=api_key,
-                api_key_reservation=api_key_reservation,
-                response=None,
-                request_service_tier=request_service_tier,
-            )
+            await _release_compact_usage()
             raise ProxyResponseError(
                 502,
                 openai_error("upstream_proxy_unavailable", f"Upstream proxy route unavailable: {exc.reason}"),
@@ -844,6 +804,13 @@ class _CompactMixin:
         finally:
             usage = response.usage if response else None
             reasoning_effort = payload.reasoning.effort if payload.reasoning else None
+            obs = extract_openai_response_metadata(response)
+            observe_openai_response(
+                request_id=request_id,
+                account_id=account_id_value,
+                requested_model=payload.model,
+                metadata=obs,
+            )
             await proxy._write_request_log(
                 account_id=account_id_value,
                 api_key=api_key,
@@ -879,6 +846,9 @@ class _CompactMixin:
                 upstream_proxy_fail_closed_reason=route_fail_closed_reason,
                 useragent=useragent,
                 useragent_group=useragent_group,
+                response_model=obs.response_model,
+                stop_reason=obs.stop_reason,
+                stop_details_category=obs.stop_details_category,
             )
             _maybe_log_proxy_service_tier_trace(
                 "compact",

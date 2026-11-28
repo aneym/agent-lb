@@ -4,6 +4,9 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
+from app.core.auth.refresh import RefreshError
+from app.core.clients.proxy import ProxyResponseError
+from app.core.resilience.overload import local_overload_error
 from app.core.utils.request_id import get_request_id
 
 logger = logging.getLogger(__name__)
@@ -80,7 +83,7 @@ class WorkAdmissionController:
             return AdmissionLease(None, stage=stage, request_id=get_request_id())
         try:
             await asyncio.wait_for(gate.semaphore.acquire(), timeout=gate.wait_timeout_seconds)
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exc:
             logger.warning(
                 "proxy_admission_overflow request_id=%s stage=%s available=%s wait_timeout_seconds=%.1f",
                 get_request_id(),
@@ -88,7 +91,20 @@ class WorkAdmissionController:
                 gate.semaphore._value,  # noqa: SLF001
                 gate.wait_timeout_seconds,
             )
-            return AdmissionLease(None, stage=stage, request_id=get_request_id())
+            if stage == "token_refresh":
+                raise RefreshError(
+                    "refresh_admission_timeout",
+                    f"Token refresh admission timed out after {gate.wait_timeout_seconds:.1f}s",
+                    False,
+                    transport_error=True,
+                ) from exc
+            raise ProxyResponseError(
+                429,
+                local_overload_error(
+                    f"Proxy admission timed out for {stage}",
+                    code="proxy_admission_timeout",
+                ),
+            ) from exc
         return AdmissionLease(gate.semaphore, stage=stage, request_id=get_request_id())
 
 

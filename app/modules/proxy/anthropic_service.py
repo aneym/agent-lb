@@ -4,14 +4,12 @@ import asyncio
 import json
 import logging
 import random
-import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Coroutine, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
-from hashlib import sha256
-from typing import Any, cast
+from typing import Any
 
 import aiohttp
 from yarl import URL
@@ -21,7 +19,11 @@ from app.core.anthropic.entrypoint_label import relabel_billing_block
 from app.core.anthropic.extra_usage import EXTRA_USAGE_QUOTA_KEY as _ANTHROPIC_EXTRA_USAGE_QUOTA_KEY
 from app.core.anthropic.extra_usage import (
     extra_usage_blocked,
+)
+from app.core.anthropic.extra_usage import (
     extra_usage_tripwire_error as _extra_usage_tripwire_error,
+)
+from app.core.anthropic.extra_usage import (
     extra_usage_tripwire_header as _extra_usage_tripwire_header,
 )
 from app.core.anthropic.models import (
@@ -32,7 +34,11 @@ from app.core.anthropic.models import (
 )
 from app.core.anthropic.parsing import (
     AnthropicResponseMetadata,
+)
+from app.core.anthropic.parsing import (
     collect_response_from_chunk as _collect_response_from_chunk,
+)
+from app.core.anthropic.parsing import (
     parse_json_response as _parse_json_response,
 )
 from app.core.anthropic.quota_headers import capture_unified_headers
@@ -53,7 +59,6 @@ from app.core.identity import RequestIdentity, attach_member, get_request_identi
 from app.core.providers import (
     ANTHROPIC_PROVIDER_NAME,
     get_anthropic_compat_profile,
-    provider_name_for_anthropic_model,
 )
 from app.core.providers.request_body import prepare_provider_body
 from app.core.utils.client_session import get_dispatch_id
@@ -62,7 +67,6 @@ from app.core.utils.time import naive_utc_to_epoch, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
 from app.modules.accounts.credits import (
     CREDITS_USAGE_WINDOW,
-    OPENROUTER_CREDITS_QUOTA_KEY,
     OPENROUTER_PROVIDER_NAME,
     credits_exhausted,
     window_from_usage,
@@ -73,6 +77,41 @@ from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservation
 from app.modules.proxy import limit_backoff, quota_cooldown_store, selection_refusal
 from app.modules.proxy._service.support import _request_log_useragent_fields
 from app.modules.proxy.account_warmup import WarmupBusy, admitted_http_session
+from app.modules.proxy.anthropic_account_guard import (
+    AccountLeaseHolder,
+    AnthropicCircuitGuard,
+    CircuitBreakerOpenError,
+    StallCatcher,
+    UpstreamTruncatedEvent,
+    anthropic_fast_mode_requested,
+    anthropic_reasoning_effort,
+    anthropic_request_session_id,
+    anthropic_session_header,
+    circuit_open_error,
+    close_async_iterator,
+    count_tokens_quota_key,
+    derive_anthropic_session_material,
+    frame_end_to_end_headers,
+    hash_for_key,
+    is_client_stream_error,
+    is_fable_model,
+    messages_provider_name,
+    messages_quota_key,
+    messages_sticky_key,
+    no_available_accounts_code,
+    provider_label,
+    provider_name_for_model,
+    quota_cooldown_code,
+    release_upstream_response,
+    request_id_from_headers,
+    resolve_planner_model,
+    sse_event_boundary,
+    stall_bounded_chunks,
+    sticky_prefix,
+)
+from app.modules.proxy.anthropic_account_guard import (
+    messages_affinity_quota_key as _messages_affinity_quota_key,
+)
 from app.modules.proxy.anthropic_cache_policy import apply_cache_tier as _apply_cache_tier
 from app.modules.proxy.anthropic_connect_retry import (
     ConnectRetryingResponse,
@@ -110,14 +149,13 @@ from app.modules.proxy.mirror_tokens import MirrorTokenRefresh
 from app.modules.proxy.openrouter_usage import chat_usage, collect_chat_usage
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 from app.modules.proxy.request_policy import resolve_model_alias
-from app.modules.usage.additional_quota_keys import get_additional_quota_definition_for_model
+from app.modules.proxy.runtime_state import AccountLease, AccountLeaseKind
 from app.modules.usage.anthropic_live_quota import observe_anthropic_quota
 
 logger = logging.getLogger(__name__)
 
 _STREAM_CHUNK_SIZE = 8192
 _MAX_SELECTION_ATTEMPTS = 4
-_ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
 
 
 _ANTHROPIC_FABLE_ACCESS_QUOTA_KEY = "anthropic_fable_access"
@@ -129,92 +167,15 @@ _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
 
 
 _FABLE_SCOPED_FRESH_SECONDS = 21600
-_ANTHROPIC_PLANNER_MODEL_ALIAS = "claude-planner"
 _FRAME_UNAVAILABLE_STATUSES = frozenset(
     {AccountStatus.PAUSED, AccountStatus.REAUTH_REQUIRED, AccountStatus.EXCHANGE_UNCERTAIN, AccountStatus.DEACTIVATED}
 )
-
-_ANTHROPIC_PLANNER_MODEL = "claude-opus-5-5"
 
 
 _OVERLOADED_RETRY_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
 
 
 _CONNECT_RETRY_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
-
-
-class UpstreamTruncatedEvent(UpstreamStallTimeout):
-    def __init__(self) -> None:
-        Exception.__init__(self, "Anthropic closed the stream inside an event (upstream_truncated_event)")
-        self.phase = "truncated_event"
-        self.seconds = 0.0
-        self.code = "upstream_truncated_event"
-
-
-class UpstreamBrokenStream(UpstreamStallTimeout):
-    def __init__(self) -> None:
-        Exception.__init__(self, "Anthropic stream broke before the response finished (upstream_stream_broken)")
-        self.phase = "stream_broken"
-        self.seconds = 0.0
-        self.code = "upstream_stream_broken"
-
-
-class _StallCatcher:
-    def __init__(self) -> None:
-        self.stall: UpstreamStallTimeout | None = None
-
-    async def __aenter__(self) -> _StallCatcher:
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> bool:
-        if isinstance(exc, UpstreamStallTimeout):
-            self.stall = exc
-            return True
-        return False
-
-
-_SSE_BLANK_LINE = re.compile(rb"(?>\r\n|\r|\n)(?>\r\n|\r|\n)")
-
-
-def _sse_event_boundary(buffer: bytes | bytearray, start: int = 0) -> int:
-
-    end = 0
-    for match in _SSE_BLANK_LINE.finditer(buffer, max(0, start - 3)):
-        end = match.end()
-    return end
-
-
-async def _stall_bounded_chunks(
-    chunks: AsyncIterator[bytes],
-    *,
-    first_byte_deadline: float | None,
-    first_byte_seconds: float,
-    idle_seconds: float,
-) -> AsyncIterator[bytes]:
-
-    iterator = chunks.__aiter__()
-    loop = asyncio.get_running_loop()
-    deadline = first_byte_deadline
-    seen_bytes = False
-    while True:
-        bound = asyncio.timeout_at(deadline)
-        try:
-            async with bound:
-                chunk = await anext(iterator)
-        except StopAsyncIteration:
-            return
-        except aiohttp.ClientPayloadError as exc:
-            raise UpstreamBrokenStream() from exc
-        except TimeoutError:
-            if not bound.expired():
-                raise
-            if seen_bytes:
-                raise UpstreamStallTimeout("stream_idle", idle_seconds) from None
-            raise UpstreamStallTimeout("first_byte", first_byte_seconds) from None
-        if chunk:
-            seen_bytes = True
-            deadline = loop.time() + idle_seconds if idle_seconds > 0 else None
-        yield chunk
 
 
 _OVERLOADED_RETRY_JITTER: Callable[[], float] = overloaded_backoff_jitter
@@ -318,11 +279,11 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
     ) -> AnthropicProxyStream:
         resolved_request = await self.resolve_message_request(payload)
         payload = resolved_request.payload
-        reasoning_effort = _anthropic_reasoning_effort(payload)
+        reasoning_effort = anthropic_reasoning_effort(payload)
         provider_name = resolved_request.provider_name
         quota_key = resolved_request.quota_key
 
-        request_id = ensure_request_id(_request_id_from_headers(inbound_headers))
+        request_id = ensure_request_id(request_id_from_headers(inbound_headers))
         started_at = time.monotonic()
         selected_account_ids: set[str] = set()
         auth_retried_account_ids: set[str] = set()
@@ -332,7 +293,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
         if provider_name == ANTHROPIC_PROVIDER_NAME:
             require_claude_code_client(useragent_group)
-        sticky_key = _messages_sticky_key(
+        sticky_key = messages_sticky_key(
             payload,
             inbound_headers,
             provider_name=provider_name,
@@ -345,7 +306,8 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             and provider_name == ANTHROPIC_PROVIDER_NAME
             and get_settings().anthropic_pool_exhausted_wait_enabled
         )
-        first_account: Account | None
+        first_account: Account | None = None
+        first_lease: AccountLease | None = None
         initial_wait_error: AnthropicProxyError | None = None
         refuse = selection_refusal.recorder(
             self._persist_request_log,
@@ -360,25 +322,30 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             useragent_group=useragent_group,
         )
         try:
-            first_account = await anchor.pinned() or await self._select_account(
-                payload.model,
-                provider_name=provider_name,
-                exclude_account_ids=selected_account_ids,
-                sticky_key=sticky_key,
-                quota_key=quota_key,
-                api_key=api_key,
-            )
+            pinned_account = await anchor.pinned()
+            if pinned_account is not None:
+                first_account = pinned_account
+            else:
+                first_account, first_lease = await self._select_account(
+                    payload.model,
+                    provider_name=provider_name,
+                    exclude_account_ids=selected_account_ids,
+                    sticky_key=sticky_key,
+                    quota_key=quota_key,
+                    api_key=api_key,
+                    lease_kind="stream",
+                )
         except AnthropicProxyError as exc:
             if not wait_enabled or exc.retry_at is None:
                 await refuse(exc)
                 raise
 
             first_account = None
+            first_lease = None
             initial_wait_error = exc
-        if first_account is not None:
-            selected_account_ids.add(first_account.id)
+        lease_holder = AccountLeaseHolder(self._load_balancer, first_lease)
 
-        async def body() -> AsyncIterator[bytes]:
+        async def _stream_body() -> AsyncIterator[bytes]:
             usage: AnthropicUsage | None = None
             last_account: Account | None = None
             mirror_error: AnthropicProxyError | None = None
@@ -395,6 +362,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             pending_wait_error = initial_wait_error
             while True:
                 if pending_wait_error is not None:
+                    await lease_holder.release()
                     await _hold_for_pool_reset(pending_wait_error, deadline=wait_deadline)
                     pending_wait_error = None
                     selected_account_ids.clear()
@@ -406,134 +374,230 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                     wake_eligibility = await self._provider_quota_eligibility(
                         provider_name, quota_key, model=payload.model
                     )
-                    for attempt in range(max(_MAX_SELECTION_ATTEMPTS, len(wake_eligibility.account_ids))):
-                        if account_override is not None:
-                            account = account_override
-                            account_override = None
-                        else:
-                            account = anchor.no_failover() or await self._select_account(
-                                payload.model,
-                                provider_name=provider_name,
-                                exclude_account_ids=selected_account_ids,
-                                sticky_key=sticky_key,
-                                quota_key=quota_key,
-                                api_key=api_key,
-                            )
-                            selected_account_ids.add(account.id)
-                        if not limit_backoff.claim(account.id):
-                            continue
-                        last_account = anchor.serving(account)
-                        last_stall = None
+                    max_attempts = max(_MAX_SELECTION_ATTEMPTS, len(wake_eligibility.account_ids))
+                    for attempt in range(max_attempts):
+                        circuit_guard: AnthropicCircuitGuard | None = None
+                        keep_lease = False
                         try:
-                            access_token = await self._fresh_access_token(account)
-                        except AnthropicProxyError as exc:
-                            if exc.code == "mirror_token_unavailable":
-                                mirror_error = exc
-                                continue
-                            if exc.status_code != 401 or not classify_refresh_error(exc.code):
-                                raise
-                            await self._persist_request_log(
-                                account=account,
-                                provider_name=provider_name,
-                                request_id=request_id,
-                                model=payload.model,
-                                reasoning_effort=reasoning_effort,
-                                started_at=started_at,
-                                status="error",
-                                error_code=exc.code,
-                                error_message=exc.message,
-                                api_key=api_key,
-                                session_id=session_id,
-                                useragent=useragent,
-                                useragent_group=useragent_group,
-                            )
-                            last_error_status = exc.status_code
-                            last_error_message = exc.message
-                            continue
-                        headers = build_anthropic_headers(
-                            inbound_headers,
-                            access_token,
-                            provider_name=provider_name,
-                            fast_mode=_anthropic_fast_mode_requested(payload),
-                        )
-                        body_payload = (
-                            openai_body
-                            if openai_body is not None
-                            else payload.model_dump(mode="json", exclude_none=True)
-                        )
-                        body_payload = prepare_provider_body(provider_name, payload.model, body_payload, headers)
-
-                        unified_headers: dict[str, str] | None = None
-                        quota_observed_at: datetime | None = None
-                        unified_5h_utilization: float | None = None
-                        unified_7d_utilization: float | None = None
-                        response_metadata = AnthropicResponseMetadata()
-                        cache_creation_tier = _apply_cache_tier(body_payload, headers, inbound_headers, provider_name)
-
-                        if openai_body is None:
-                            body_payload, _ = strip_eval_web_tools(body_payload, "anthropic")
-                        if provider_name == ANTHROPIC_PROVIDER_NAME:
-                            relabel_billing_block(body_payload, get_settings().anthropic_entrypoint_label)
-                        nbytes = len(json.dumps(body_payload, separators=(",", ":")).encode())
-
-                        first_byte_seconds = get_settings().anthropic_first_byte_timeout_seconds
-                        idle_seconds = get_settings().anthropic_stream_idle_timeout_seconds if payload.stream else 0.0
-                        stall_catcher = _StallCatcher()
-                        async with (
-                            stall_catcher,
-                            admitted_http_session(account, session_id or sticky_key, nbytes, upload_class) as (
-                                session,
-                                admission_stack,
-                            ),
-                        ):
-                            first_byte_deadline = (
-                                asyncio.get_running_loop().time() + first_byte_seconds
-                                if payload.stream and first_byte_seconds > 0
-                                else None
-                            )
-                            async with ConnectRetryingResponse(
-                                lambda: self._open_upstream_response(
-                                    session,
+                            if account_override is not None:
+                                account = account_override
+                                account_override = None
+                            else:
+                                anchor.no_failover()
+                                account, lease = await self._select_account(
+                                    payload.model,
                                     provider_name=provider_name,
-                                    headers=headers,
-                                    json_body=body_payload,
-                                    **({"openai_chat": True} if openai_body is not None else {}),
+                                    exclude_account_ids=selected_account_ids,
+                                    sticky_key=sticky_key,
+                                    quota_key=quota_key,
+                                    api_key=api_key,
+                                    lease_kind="stream",
+                                )
+                                lease_holder.set(lease)
+                                selected_account_ids.add(account.id)
+                            if not limit_backoff.claim(account.id):
+                                continue
+                            last_account = anchor.serving(account)
+                            last_stall = None
+                            circuit_guard = AnthropicCircuitGuard(account.id, provider_name)
+                            try:
+                                await circuit_guard.enter()
+                            except CircuitBreakerOpenError:
+                                last_error_status = 503
+                                last_error_message = f"Circuit breaker open for {provider_label(provider_name)} account"
+                                continue
+                            try:
+                                access_token = await self._fresh_access_token(account)
+                            except AnthropicProxyError as exc:
+                                if exc.code == "mirror_token_unavailable":
+                                    mirror_error = exc
+                                    continue
+                                if exc.status_code != 401 or not classify_refresh_error(exc.code):
+                                    raise
+                                await self._persist_request_log(
+                                    account=account,
+                                    provider_name=provider_name,
+                                    request_id=request_id,
+                                    model=payload.model,
+                                    reasoning_effort=reasoning_effort,
+                                    started_at=started_at,
+                                    status="error",
+                                    error_code=exc.code,
+                                    error_message=exc.message,
+                                    api_key=api_key,
+                                    session_id=session_id,
+                                    useragent=useragent,
+                                    useragent_group=useragent_group,
+                                )
+                                last_error_status = exc.status_code
+                                last_error_message = exc.message
+                                continue
+                            headers = build_anthropic_headers(
+                                inbound_headers,
+                                access_token,
+                                provider_name=provider_name,
+                                fast_mode=anthropic_fast_mode_requested(payload),
+                            )
+                            body_payload = (
+                                openai_body
+                                if openai_body is not None
+                                else payload.model_dump(mode="json", exclude_none=True)
+                            )
+                            body_payload = prepare_provider_body(provider_name, payload.model, body_payload, headers)
+
+                            unified_headers: dict[str, str] | None = None
+                            quota_observed_at: datetime | None = None
+                            unified_5h_utilization: float | None = None
+                            unified_7d_utilization: float | None = None
+                            response_metadata = AnthropicResponseMetadata()
+                            cache_creation_tier = _apply_cache_tier(
+                                body_payload, headers, inbound_headers, provider_name
+                            )
+
+                            if openai_body is None:
+                                body_payload, _ = strip_eval_web_tools(body_payload, "anthropic")
+                            if provider_name == ANTHROPIC_PROVIDER_NAME:
+                                relabel_billing_block(body_payload, get_settings().anthropic_entrypoint_label)
+                            nbytes = len(json.dumps(body_payload, separators=(",", ":")).encode())
+
+                            first_byte_seconds = get_settings().anthropic_first_byte_timeout_seconds
+                            idle_seconds = (
+                                get_settings().anthropic_stream_idle_timeout_seconds if payload.stream else 0.0
+                            )
+                            stall_catcher = StallCatcher()
+                            async with (
+                                stall_catcher,
+                                admitted_http_session(account, session_id or sticky_key, nbytes, upload_class) as (
+                                    session,
+                                    admission_stack,
                                 ),
-                                attempts=get_settings().upstream_connect_attempts,
-                                label=_provider_label(provider_name),
-                                first_byte_deadline=first_byte_deadline,
-                                first_byte_seconds=first_byte_seconds,
-                                sleep_fn=_CONNECT_RETRY_SLEEP,
-                            ) as resp:
-                                await admission_stack.aclose()
-                                quota_observed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                                unified_headers = (
-                                    capture_unified_headers(resp.headers)
-                                    if provider_name == ANTHROPIC_PROVIDER_NAME
+                            ):
+                                first_byte_deadline = (
+                                    asyncio.get_running_loop().time() + first_byte_seconds
+                                    if payload.stream and first_byte_seconds > 0
                                     else None
                                 )
-                                unified_5h_utilization = None
-                                unified_7d_utilization = None
-                                if provider_name == ANTHROPIC_PROVIDER_NAME:
-                                    unified_5h_utilization = _parse_unified_utilization(
-                                        resp.headers.get("anthropic-ratelimit-unified-5h-utilization")
+                                async with ConnectRetryingResponse(
+                                    lambda: self._open_upstream_response(
+                                        session,
+                                        provider_name=provider_name,
+                                        headers=headers,
+                                        json_body=body_payload,
+                                        **({"openai_chat": True} if openai_body is not None else {}),
+                                    ),
+                                    attempts=get_settings().upstream_connect_attempts,
+                                    label=provider_label(provider_name),
+                                    first_byte_deadline=first_byte_deadline,
+                                    first_byte_seconds=first_byte_seconds,
+                                    sleep_fn=_CONNECT_RETRY_SLEEP,
+                                ) as resp:
+                                    await admission_stack.aclose()
+                                    quota_observed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                                    unified_headers = (
+                                        capture_unified_headers(resp.headers)
+                                        if provider_name == ANTHROPIC_PROVIDER_NAME
+                                        else None
                                     )
-                                    unified_7d_utilization = _parse_unified_utilization(
-                                        resp.headers.get("anthropic-ratelimit-unified-7d-utilization")
-                                    )
-                                if provider_name == ANTHROPIC_PROVIDER_NAME:
-                                    await observe_anthropic_quota(account.id, resp.headers)
-                                if resp.status >= 400:
-                                    raw_error = await resp.read()
-                                    try:
-                                        error_payload = json.loads(raw_error)
-                                    except (UnicodeDecodeError, json.JSONDecodeError):
-                                        error_payload = None
-                                    rule = match_error_rule(
-                                        provider_name, resp.status, error_payload, get_settings().upstream_error_rules
-                                    )
-                                    if rule is not None:
-                                        await apply_error_rule(rule, account, self._repo_factory, self._load_balancer)
+                                    unified_5h_utilization = None
+                                    unified_7d_utilization = None
+                                    if provider_name == ANTHROPIC_PROVIDER_NAME:
+                                        unified_5h_utilization = _parse_unified_utilization(
+                                            resp.headers.get("anthropic-ratelimit-unified-5h-utilization")
+                                        )
+                                        unified_7d_utilization = _parse_unified_utilization(
+                                            resp.headers.get("anthropic-ratelimit-unified-7d-utilization")
+                                        )
+                                    if provider_name == ANTHROPIC_PROVIDER_NAME:
+                                        await observe_anthropic_quota(account.id, resp.headers)
+                                    if resp.status >= 400:
+                                        raw_error = await resp.read()
+                                        try:
+                                            error_payload = json.loads(raw_error)
+                                        except (UnicodeDecodeError, json.JSONDecodeError):
+                                            error_payload = None
+                                        rule = match_error_rule(
+                                            provider_name,
+                                            resp.status,
+                                            error_payload,
+                                            get_settings().upstream_error_rules,
+                                        )
+                                        if rule is not None:
+                                            await circuit_guard.record_http_status(resp.status)
+                                            await apply_error_rule(
+                                                rule, account, self._repo_factory, self._load_balancer
+                                            )
+                                            await self._persist_request_log(
+                                                account=account,
+                                                provider_name=provider_name,
+                                                request_id=request_id,
+                                                model=payload.model,
+                                                reasoning_effort=reasoning_effort,
+                                                started_at=started_at,
+                                                status="error",
+                                                error_code=rule_error_code(rule),
+                                                error_message=rule_error_message(rule),
+                                                api_key=api_key,
+                                                session_id=session_id,
+                                                useragent=useragent,
+                                                useragent_group=useragent_group,
+                                                unified_5h_utilization=unified_5h_utilization,
+                                                unified_7d_utilization=unified_7d_utilization,
+                                                unified_headers=unified_headers,
+                                                quota_observed_at=quota_observed_at,
+                                            )
+                                            if rule.action == "fail_request":
+                                                raise AnthropicProxyError(
+                                                    resp.status, rule.reason, code="upstream_rule"
+                                                )
+                                            last_error_status = None
+                                            last_error_message = rule_client_message(
+                                                rule, provider_label(provider_name)
+                                            )
+                                            continue
+                                    if resp.status in {401, 403}:
+                                        error_message = await read_error_message(resp)
+                                        error_code = f"upstream_{resp.status}"
+                                        if refresh_due(
+                                            provider_name, resp.status, account.id, auth_retried_account_ids
+                                        ):
+                                            auth_retried_account_ids.add(account.id)
+                                            try:
+                                                await self._fresh_access_token(
+                                                    account, rejected_access_token=access_token
+                                                )
+                                            except AnthropicProxyError as exc:
+                                                error_code = exc.code or error_code
+                                                error_message = exc.message
+                                            else:
+                                                account_override = account
+                                                keep_lease = attempt + 1 < max_attempts
+                                                continue
+                                        if rejects_key(provider_name, resp.status, error_code):
+                                            error_code = "invalid_api_key"
+                                            await self._load_balancer.mark_permanent_failure(account, error_code)
+                                        elif resp.status == 403 and (
+                                            "oauth authentication is currently not allowed for this organization"
+                                            in error_message.lower()
+                                        ):
+                                            async with self._repo_factory() as repos:
+                                                await repos.accounts.update_status_if_current(
+                                                    account.id,
+                                                    account.status,
+                                                    ANTHROPIC_OAUTH_ORGANIZATION_BLOCK,
+                                                    account.reset_at,
+                                                    blocked_at=account.blocked_at,
+                                                    expected_status=account.status,
+                                                    expected_deactivation_reason=account.deactivation_reason,
+                                                    expected_reset_at=account.reset_at,
+                                                    expected_blocked_at=account.blocked_at,
+                                                )
+                                        elif refuses_plan(provider_name, resp.status, error_message):
+                                            error_code = "permission_error"
+                                        elif error_code == "mirror_token_unavailable":
+                                            mirror_error = AnthropicProxyError(503, error_message, code=error_code)
+                                            continue
+                                        else:
+                                            await self._load_balancer.record_error(account)
                                         await self._persist_request_log(
                                             account=account,
                                             provider_name=provider_name,
@@ -542,8 +606,8 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                             reasoning_effort=reasoning_effort,
                                             started_at=started_at,
                                             status="error",
-                                            error_code=rule_error_code(rule),
-                                            error_message=rule_error_message(rule),
+                                            error_code=error_code,
+                                            error_message=error_message,
                                             api_key=api_key,
                                             session_id=session_id,
                                             useragent=useragent,
@@ -553,327 +617,305 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                             unified_headers=unified_headers,
                                             quota_observed_at=quota_observed_at,
                                         )
-                                        if rule.action == "fail_request":
-                                            raise AnthropicProxyError(resp.status, rule.reason, code="upstream_rule")
-                                        last_error_status = None
-                                        last_error_message = rule_client_message(rule, _provider_label(provider_name))
-                                        continue
-                                if resp.status in {401, 403}:
-                                    error_message = await read_error_message(resp)
-                                    error_code = f"upstream_{resp.status}"
-                                    if refresh_due(provider_name, resp.status, account.id, auth_retried_account_ids):
-                                        auth_retried_account_ids.add(account.id)
-                                        try:
-                                            await self._fresh_access_token(account, rejected_access_token=access_token)
-                                        except AnthropicProxyError as exc:
-                                            error_code = exc.code or error_code
-                                            error_message = exc.message
-                                        else:
-                                            account_override = account
-                                            continue
-                                    if rejects_key(provider_name, resp.status, error_code):
-                                        error_code = "invalid_api_key"
-                                        await self._load_balancer.mark_permanent_failure(account, error_code)
-                                    elif resp.status == 403 and (
-                                        "oauth authentication is currently not allowed for this organization"
-                                        in error_message.lower()
-                                    ):
-                                        async with self._repo_factory() as repos:
-                                            await repos.accounts.update_status_if_current(
-                                                account.id,
-                                                account.status,
-                                                ANTHROPIC_OAUTH_ORGANIZATION_BLOCK,
-                                                account.reset_at,
-                                                blocked_at=account.blocked_at,
-                                                expected_status=account.status,
-                                                expected_deactivation_reason=account.deactivation_reason,
-                                                expected_reset_at=account.reset_at,
-                                                expected_blocked_at=account.blocked_at,
+                                        if error_code in STOP_STATUS:
+                                            raise AnthropicProxyError(
+                                                STOP_STATUS[error_code], error_message, code=error_code
                                             )
-                                    elif refuses_plan(provider_name, resp.status, error_message):
-                                        error_code = "permission_error"
-                                    elif error_code == "mirror_token_unavailable":
-                                        mirror_error = AnthropicProxyError(503, error_message, code=error_code)
+                                        last_error_status = resp.status
+                                        last_error_message = error_message
                                         continue
-                                    else:
+                                    if resp.status == 429:
+                                        error_message = await read_error_message(resp)
+                                        rate_limit_error = rate_limit_error_from_response(resp, error_message)
+                                        if provider_name == "kimi":
+                                            rate_limit_error = await kimi_monthly_rate_limit_error(
+                                                account, rate_limit_error, self._repo_factory
+                                            )
+                                        if not rate_limit_error.get("monthly_quota"):
+                                            await quota_cooldown_store.record(
+                                                self._repo_factory,
+                                                account.id,
+                                                quota_key=quota_key,
+                                                error=rate_limit_error,
+                                            )
+                                        try:
+                                            await self._load_balancer.mark_rate_limit(account, rate_limit_error)
+                                        except Exception:
+                                            logger.warning("Could not persist rate limit account_id=%s", account.id)
+                                        await self._persist_request_log(
+                                            account=account,
+                                            provider_name=provider_name,
+                                            request_id=request_id,
+                                            model=payload.model,
+                                            reasoning_effort=reasoning_effort,
+                                            started_at=started_at,
+                                            status="error",
+                                            error_code="rate_limit_exceeded",
+                                            error_message=error_message,
+                                            api_key=api_key,
+                                            session_id=session_id,
+                                            useragent=useragent,
+                                            useragent_group=useragent_group,
+                                            unified_5h_utilization=unified_5h_utilization,
+                                            unified_7d_utilization=unified_7d_utilization,
+                                            unified_headers=unified_headers,
+                                            quota_observed_at=quota_observed_at,
+                                        )
+                                        last_error_status = resp.status
+                                        last_error_message = error_message
+                                        continue
+                                    if resp.status in TRANSIENT_UPSTREAM_STATUSES:
+                                        error_message = await read_error_message(resp)
                                         await self._load_balancer.record_error(account)
-                                    await self._persist_request_log(
-                                        account=account,
-                                        provider_name=provider_name,
-                                        request_id=request_id,
-                                        model=payload.model,
-                                        reasoning_effort=reasoning_effort,
-                                        started_at=started_at,
-                                        status="error",
-                                        error_code=error_code,
-                                        error_message=error_message,
-                                        api_key=api_key,
-                                        session_id=session_id,
-                                        useragent=useragent,
-                                        useragent_group=useragent_group,
-                                        unified_5h_utilization=unified_5h_utilization,
-                                        unified_7d_utilization=unified_7d_utilization,
-                                        unified_headers=unified_headers,
-                                        quota_observed_at=quota_observed_at,
-                                    )
-                                    if error_code in STOP_STATUS:
+                                        await circuit_guard.record_http_status(resp.status)
+                                        await self._persist_request_log(
+                                            account=account,
+                                            provider_name=provider_name,
+                                            request_id=request_id,
+                                            model=payload.model,
+                                            reasoning_effort=reasoning_effort,
+                                            started_at=started_at,
+                                            status="error",
+                                            error_code=f"upstream_{resp.status}",
+                                            error_message=error_message,
+                                            api_key=api_key,
+                                            session_id=session_id,
+                                            useragent=useragent,
+                                            useragent_group=useragent_group,
+                                            unified_5h_utilization=unified_5h_utilization,
+                                            unified_7d_utilization=unified_7d_utilization,
+                                            unified_headers=unified_headers,
+                                            quota_observed_at=quota_observed_at,
+                                        )
+                                        last_error_status = resp.status
+                                        last_error_message = error_message
+                                        if attempt + 1 < _MAX_SELECTION_ATTEMPTS:
+                                            await _OVERLOADED_RETRY_SLEEP(_overloaded_backoff_seconds(attempt))
+                                        elif resp.status != 529:
+                                            break
+                                        continue
+                                    if resp.status >= 400:
+                                        error_details = await read_error_details(resp)
+                                        if resp.status >= 500:
+                                            await self._load_balancer.record_error(account)
+                                        await circuit_guard.record_http_status(resp.status)
+                                        await self._persist_request_log(
+                                            account=account,
+                                            provider_name=provider_name,
+                                            request_id=request_id,
+                                            model=payload.model,
+                                            reasoning_effort=reasoning_effort,
+                                            started_at=started_at,
+                                            status="error",
+                                            error_code=f"upstream_{resp.status}",
+                                            error_message=error_details.message,
+                                            api_key=api_key,
+                                            session_id=session_id,
+                                            useragent=useragent,
+                                            useragent_group=useragent_group,
+                                            unified_5h_utilization=unified_5h_utilization,
+                                            unified_7d_utilization=unified_7d_utilization,
+                                            unified_headers=unified_headers,
+                                            quota_observed_at=quota_observed_at,
+                                        )
                                         raise AnthropicProxyError(
-                                            STOP_STATUS[error_code], error_message, code=error_code
+                                            resp.status,
+                                            error_details.message,
+                                            code=error_details.error_type or error_type_for_status(resp.status),
+                                            details=error_details.details,
                                         )
-                                    last_error_status = resp.status
-                                    last_error_message = error_message
-                                    continue
-                                if resp.status == 429:
-                                    error_message = await read_error_message(resp)
-                                    rate_limit_error = rate_limit_error_from_response(resp, error_message)
-                                    if provider_name == "kimi":
-                                        rate_limit_error = await kimi_monthly_rate_limit_error(
-                                            account, rate_limit_error, self._repo_factory
+
+                                    tripwire_error: UpstreamError | None = None
+                                    if provider_name == ANTHROPIC_PROVIDER_NAME:
+                                        tripwire_error = _extra_usage_tripwire_error(resp.headers)
+                                    paid_fallback = account.id in wake_eligibility.paid_fallback_account_ids
+                                    if (
+                                        tripwire_error is not None
+                                        and not paid_fallback
+                                        and not get_settings().anthropic_route_to_extra_usage
+                                    ):
+                                        await circuit_guard.record_success()
+                                        header_name = _extra_usage_tripwire_header(resp.headers) or "unknown"
+                                        logger.warning(
+                                            "Anthropic extra-usage response refused account_id_prefix=%s "
+                                            "header=%s reset_at=%s",
+                                            account.id[:8],
+                                            header_name,
+                                            tripwire_error.get("resets_at"),
                                         )
-                                    if not rate_limit_error.get("monthly_quota"):
                                         await quota_cooldown_store.record(
                                             self._repo_factory,
                                             account.id,
-                                            quota_key=quota_key,
-                                            error=rate_limit_error,
+                                            quota_key=_ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+                                            error=tripwire_error,
                                         )
-                                    try:
-                                        await self._load_balancer.mark_rate_limit(account, rate_limit_error)
-                                    except Exception:
-                                        logger.warning("Could not persist rate limit account_id=%s", account.id)
-                                    await self._persist_request_log(
-                                        account=account,
-                                        provider_name=provider_name,
-                                        request_id=request_id,
-                                        model=payload.model,
-                                        reasoning_effort=reasoning_effort,
-                                        started_at=started_at,
-                                        status="error",
-                                        error_code="rate_limit_exceeded",
-                                        error_message=error_message,
-                                        api_key=api_key,
-                                        session_id=session_id,
-                                        useragent=useragent,
-                                        useragent_group=useragent_group,
-                                        unified_5h_utilization=unified_5h_utilization,
-                                        unified_7d_utilization=unified_7d_utilization,
-                                        unified_headers=unified_headers,
-                                        quota_observed_at=quota_observed_at,
-                                    )
-                                    last_error_status = resp.status
-                                    last_error_message = error_message
-                                    continue
-                                if resp.status in TRANSIENT_UPSTREAM_STATUSES:
-                                    error_message = await read_error_message(resp)
-                                    await self._load_balancer.record_error(account)
-                                    await self._persist_request_log(
-                                        account=account,
-                                        provider_name=provider_name,
-                                        request_id=request_id,
-                                        model=payload.model,
-                                        reasoning_effort=reasoning_effort,
-                                        started_at=started_at,
-                                        status="error",
-                                        error_code=f"upstream_{resp.status}",
-                                        error_message=error_message,
-                                        api_key=api_key,
-                                        session_id=session_id,
-                                        useragent=useragent,
-                                        useragent_group=useragent_group,
-                                        unified_5h_utilization=unified_5h_utilization,
-                                        unified_7d_utilization=unified_7d_utilization,
-                                        unified_headers=unified_headers,
-                                        quota_observed_at=quota_observed_at,
-                                    )
-                                    last_error_status = resp.status
-                                    last_error_message = error_message
-                                    if attempt + 1 < _MAX_SELECTION_ATTEMPTS:
-                                        await _OVERLOADED_RETRY_SLEEP(_overloaded_backoff_seconds(attempt))
-                                    elif resp.status != 529:
-                                        break
-                                    continue
-                                if resp.status >= 400:
-                                    error_details = await read_error_details(resp)
-
-                                    if resp.status != 404:
-                                        await self._load_balancer.record_error(account)
-                                    await self._persist_request_log(
-                                        account=account,
-                                        provider_name=provider_name,
-                                        request_id=request_id,
-                                        model=payload.model,
-                                        reasoning_effort=reasoning_effort,
-                                        started_at=started_at,
-                                        status="error",
-                                        error_code=f"upstream_{resp.status}",
-                                        error_message=error_details.message,
-                                        api_key=api_key,
-                                        session_id=session_id,
-                                        useragent=useragent,
-                                        useragent_group=useragent_group,
-                                        unified_5h_utilization=unified_5h_utilization,
-                                        unified_7d_utilization=unified_7d_utilization,
-                                        unified_headers=unified_headers,
-                                        quota_observed_at=quota_observed_at,
-                                    )
-                                    raise AnthropicProxyError(
-                                        resp.status,
-                                        error_details.message,
-                                        code=error_details.error_type or error_type_for_status(resp.status),
-                                        details=error_details.details,
-                                    )
-
-                                tripwire_error: UpstreamError | None = None
-                                if provider_name == ANTHROPIC_PROVIDER_NAME:
-                                    tripwire_error = _extra_usage_tripwire_error(resp.headers)
-                                paid_fallback = account.id in wake_eligibility.paid_fallback_account_ids
-                                if (
-                                    tripwire_error is not None
-                                    and not paid_fallback
-                                    and not get_settings().anthropic_route_to_extra_usage
-                                ):
-                                    header_name = _extra_usage_tripwire_header(resp.headers) or "unknown"
-                                    logger.warning(
-                                        "Anthropic extra-usage response refused account_id_prefix=%s "
-                                        "header=%s reset_at=%s",
-                                        account.id[:8],
-                                        header_name,
-                                        tripwire_error.get("resets_at"),
-                                    )
-                                    await quota_cooldown_store.record(
-                                        self._repo_factory,
-                                        account.id,
-                                        quota_key=_ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
-                                        error=tripwire_error,
-                                    )
-                                    await _release_upstream_response(resp)
-                                    await self._persist_request_log(
-                                        account=account,
-                                        provider_name=provider_name,
-                                        request_id=request_id,
-                                        model=payload.model,
-                                        reasoning_effort=reasoning_effort,
-                                        started_at=started_at,
-                                        status="error",
-                                        error_code="extra_usage_refused",
-                                        error_message="Anthropic response billed extra usage",
-                                        api_key=api_key,
-                                        session_id=session_id,
-                                        useragent=useragent,
-                                        useragent_group=useragent_group,
-                                        unified_5h_utilization=unified_5h_utilization,
-                                        unified_7d_utilization=unified_7d_utilization,
-                                        unified_headers=unified_headers,
-                                        quota_observed_at=quota_observed_at,
-                                    )
-                                    last_error_status = 429
-                                    last_error_message = "Anthropic response billed extra usage"
-                                    continue
-                                if tripwire_error is not None:
-                                    logger.warning(
-                                        "Anthropic response reports extra-usage billing; recording quota "
-                                        "cooldown account_id=%s quota_key=%s request_id=%s",
-                                        account.id,
-                                        _ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
-                                        request_id,
-                                    )
-                                    await quota_cooldown_store.record(
-                                        self._repo_factory,
-                                        account.id,
-                                        quota_key=_ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
-                                        error=tripwire_error,
-                                    )
-
-                                text_buffer = ""
-                                stream_error: AnthropicErrorEvent | None = None
-
-                                raw_body = bytearray() if not payload.stream else None
-
-                                unsent = bytearray()
-                                scanned = 0
-                                async for chunk in _stall_bounded_chunks(
-                                    resp.content.iter_chunked(_STREAM_CHUNK_SIZE),
-                                    first_byte_deadline=first_byte_deadline,
-                                    first_byte_seconds=first_byte_seconds,
-                                    idle_seconds=idle_seconds,
-                                ):
-                                    if not chunk:
+                                        await release_upstream_response(resp)
+                                        await self._persist_request_log(
+                                            account=account,
+                                            provider_name=provider_name,
+                                            request_id=request_id,
+                                            model=payload.model,
+                                            reasoning_effort=reasoning_effort,
+                                            started_at=started_at,
+                                            status="error",
+                                            error_code="extra_usage_refused",
+                                            error_message="Anthropic response billed extra usage",
+                                            api_key=api_key,
+                                            session_id=session_id,
+                                            useragent=useragent,
+                                            useragent_group=useragent_group,
+                                            unified_5h_utilization=unified_5h_utilization,
+                                            unified_7d_utilization=unified_7d_utilization,
+                                            unified_headers=unified_headers,
+                                            quota_observed_at=quota_observed_at,
+                                        )
+                                        last_error_status = 429
+                                        last_error_message = "Anthropic response billed extra usage"
                                         continue
-                                    chunk_bytes = bytes(chunk)
-                                    if raw_body is not None:
-                                        raw_body.extend(chunk_bytes)
-                                    else:
-                                        if openai_body is not None:
-                                            text_buffer, usage, chunk_error, saw_output = collect_chat_usage(
-                                                text_buffer, chunk_bytes, usage
-                                            )
-                                        else:
-                                            (
-                                                text_buffer,
-                                                usage,
-                                                chunk_error,
-                                                saw_output,
-                                                response_metadata,
-                                            ) = _collect_response_from_chunk(
-                                                text_buffer, chunk_bytes, usage, response_metadata
-                                            )
-                                        if latency_first_token_ms is None and saw_output:
-                                            latency_first_token_ms = int((time.monotonic() - started_at) * 1000)
-                                        if chunk_error is not None:
-                                            stream_error = chunk_error
-                                        unsent.extend(chunk_bytes)
-                                        cut = _sse_event_boundary(unsent, scanned)
-                                        if cut:
-                                            chunk_bytes = bytes(unsent[:cut])
-                                            del unsent[:cut]
-                                        scanned = len(unsent)
-                                        if not cut:
-                                            continue
-                                    streamed_bytes = True
-                                    yield chunk_bytes
-                                if unsent.strip(b"\r\n"):
-                                    raise UpstreamTruncatedEvent()
-                                if unsent:
-                                    yield bytes(unsent)
-                                if raw_body is not None:
-                                    if openai_body is not None:
-                                        usage = chat_usage(json.loads(raw_body)) or usage
-                                    else:
-                                        parsed_usage, response_metadata = _parse_json_response(bytes(raw_body))
-                                        usage = parsed_usage or usage
-                                if openai_body is None:
-                                    observe_anthropic_response(
-                                        request_id=request_id,
-                                        account_id=account.id,
-                                        provider_name=provider_name,
-                                        requested_model=upstream_requested_model(body_payload, payload.model),
-                                        metadata=response_metadata,
-                                    )
+                                    if tripwire_error is not None:
+                                        logger.warning(
+                                            "Anthropic response reports extra-usage billing; recording quota "
+                                            "cooldown account_id=%s quota_key=%s request_id=%s",
+                                            account.id,
+                                            _ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+                                            request_id,
+                                        )
+                                        await quota_cooldown_store.record(
+                                            self._repo_factory,
+                                            account.id,
+                                            quota_key=_ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+                                            error=tripwire_error,
+                                        )
 
-                                if stream_error is not None:
-                                    stream_error_type = stream_error.error.type or "unknown"
-                                    logger.warning(
-                                        "anthropic_stream_error_event request_id=%s account_id=%s "
-                                        "error_type=%s message=%s",
-                                        request_id,
-                                        account.id,
-                                        stream_error_type,
-                                        stream_error.error.message,
-                                    )
-                                    if stream_error_type in (
-                                        "rate_limit_error",
-                                        "rate_limit_exceeded",
-                                        "usage_limit_reached",
+                                    text_buffer = ""
+                                    stream_error: AnthropicErrorEvent | None = None
+
+                                    raw_body = bytearray() if not payload.stream else None
+
+                                    unsent = bytearray()
+                                    scanned = 0
+                                    async for chunk in stall_bounded_chunks(
+                                        resp.content.iter_chunked(_STREAM_CHUNK_SIZE),
+                                        first_byte_deadline=first_byte_deadline,
+                                        first_byte_seconds=first_byte_seconds,
+                                        idle_seconds=idle_seconds,
                                     ):
-                                        await self._load_balancer.mark_rate_limit(
-                                            account, UpstreamError(message=stream_error.error.message)
+                                        if not chunk:
+                                            continue
+                                        chunk_bytes = bytes(chunk)
+                                        if raw_body is not None:
+                                            raw_body.extend(chunk_bytes)
+                                        else:
+                                            if openai_body is not None:
+                                                text_buffer, usage, chunk_error, saw_output = collect_chat_usage(
+                                                    text_buffer, chunk_bytes, usage
+                                                )
+                                            else:
+                                                (
+                                                    text_buffer,
+                                                    usage,
+                                                    chunk_error,
+                                                    saw_output,
+                                                    response_metadata,
+                                                ) = _collect_response_from_chunk(
+                                                    text_buffer, chunk_bytes, usage, response_metadata
+                                                )
+                                            if latency_first_token_ms is None and saw_output:
+                                                latency_first_token_ms = int((time.monotonic() - started_at) * 1000)
+                                            if chunk_error is not None:
+                                                stream_error = chunk_error
+                                            unsent.extend(chunk_bytes)
+                                            cut = sse_event_boundary(unsent, scanned)
+                                            if cut:
+                                                chunk_bytes = bytes(unsent[:cut])
+                                                del unsent[:cut]
+                                            scanned = len(unsent)
+                                            if not cut:
+                                                continue
+                                        streamed_bytes = True
+                                        yield chunk_bytes
+                                    if unsent.strip(b"\r\n"):
+                                        raise UpstreamTruncatedEvent()
+                                    if unsent:
+                                        yield bytes(unsent)
+                                    if raw_body is not None:
+                                        if openai_body is not None:
+                                            usage = chat_usage(json.loads(raw_body)) or usage
+                                        else:
+                                            parsed_usage, response_metadata = _parse_json_response(bytes(raw_body))
+                                            usage = parsed_usage or usage
+                                    if openai_body is None:
+                                        observe_anthropic_response(
+                                            request_id=request_id,
+                                            account_id=account.id,
+                                            provider_name=provider_name,
+                                            requested_model=upstream_requested_model(body_payload, payload.model),
+                                            metadata=response_metadata,
                                         )
-                                    elif stream_error_type in ("insufficient_quota", "quota_exceeded"):
-                                        await self._load_balancer.mark_quota_exceeded(
-                                            account, UpstreamError(message=stream_error.error.message)
+
+                                    if stream_error is not None:
+                                        stream_error_type = stream_error.error.type or "unknown"
+                                        logger.warning(
+                                            "anthropic_stream_error_event request_id=%s account_id=%s "
+                                            "error_type=%s message=%s",
+                                            request_id,
+                                            account.id,
+                                            stream_error_type,
+                                            stream_error.error.message,
                                         )
-                                    else:
-                                        await self._load_balancer.record_error(account)
+                                        if stream_error_type in (
+                                            "rate_limit_error",
+                                            "rate_limit_exceeded",
+                                            "usage_limit_reached",
+                                        ):
+                                            await self._load_balancer.mark_rate_limit(
+                                                account, UpstreamError(message=stream_error.error.message)
+                                            )
+                                        elif stream_error_type in ("insufficient_quota", "quota_exceeded"):
+                                            await self._load_balancer.mark_quota_exceeded(
+                                                account, UpstreamError(message=stream_error.error.message)
+                                            )
+                                        elif is_client_stream_error(stream_error_type):
+                                            await circuit_guard.record_success()
+                                        else:
+                                            await self._load_balancer.record_error(account)
+                                        await self._persist_request_log(
+                                            account=account,
+                                            provider_name=provider_name,
+                                            request_id=request_id,
+                                            model=payload.model,
+                                            reasoning_effort=reasoning_effort,
+                                            started_at=started_at,
+                                            status="error",
+                                            error_code=f"stream_error_{stream_error_type}",
+                                            error_message=stream_error.error.message,
+                                            api_key=api_key,
+                                            session_id=session_id,
+                                            useragent=useragent,
+                                            useragent_group=useragent_group,
+                                            unified_5h_utilization=unified_5h_utilization,
+                                            unified_7d_utilization=unified_7d_utilization,
+                                            unified_headers=unified_headers,
+                                            quota_observed_at=quota_observed_at,
+                                            usage=usage,
+                                            cache_creation_tier=cache_creation_tier,
+                                            latency_first_token_ms=latency_first_token_ms,
+                                            response_metadata=response_metadata,
+                                        )
+                                        await self._finalize_api_key_reservation(
+                                            api_key_reservation,
+                                            model=payload.model,
+                                            usage=usage,
+                                            cache_creation_tier=cache_creation_tier,
+                                        )
+                                        return
+
+                                    await circuit_guard.record_success()
+                                    await self._load_balancer.record_success(account)
+                                    if tripwire_error is None:
+                                        await quota_cooldown_store.clear(
+                                            self._repo_factory, account.id, quota_key=quota_key
+                                        )
                                     await self._persist_request_log(
                                         account=account,
                                         provider_name=provider_name,
@@ -881,9 +923,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                         model=payload.model,
                                         reasoning_effort=reasoning_effort,
                                         started_at=started_at,
-                                        status="error",
-                                        error_code=f"stream_error_{stream_error_type}",
-                                        error_message=stream_error.error.message,
+                                        status="success",
                                         api_key=api_key,
                                         session_id=session_id,
                                         useragent=useragent,
@@ -904,90 +944,70 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                         cache_creation_tier=cache_creation_tier,
                                     )
                                     return
+                            stall = stall_catcher.stall
+                            if stall is None:
+                                continue
 
-                                await self._load_balancer.record_success(account)
-                                if tripwire_error is None:
-                                    await quota_cooldown_store.clear(
-                                        self._repo_factory, account.id, quota_key=quota_key
-                                    )
-                                await self._persist_request_log(
-                                    account=account,
+                            await circuit_guard.record_failure(stall)
+                            logger.warning(
+                                "anthropic_upstream_stall request_id=%s account_id=%s phase=%s bound_seconds=%g "
+                                "streamed_bytes=%s",
+                                request_id,
+                                account.id,
+                                stall.phase,
+                                stall.seconds,
+                                streamed_bytes,
+                            )
+
+                            await self._shielded(
+                                self._record_stall(
+                                    account,
+                                    stall,
+                                    reservation=api_key_reservation if streamed_bytes else None,
                                     provider_name=provider_name,
                                     request_id=request_id,
                                     model=payload.model,
                                     reasoning_effort=reasoning_effort,
                                     started_at=started_at,
-                                    status="success",
                                     api_key=api_key,
                                     session_id=session_id,
                                     useragent=useragent,
                                     useragent_group=useragent_group,
-                                    unified_5h_utilization=unified_5h_utilization,
-                                    unified_7d_utilization=unified_7d_utilization,
+                                    usage=usage,
+                                    latency_first_token_ms=latency_first_token_ms,
+                                    cache_creation_tier=cache_creation_tier,
                                     unified_headers=unified_headers,
                                     quota_observed_at=quota_observed_at,
-                                    usage=usage,
-                                    cache_creation_tier=cache_creation_tier,
-                                    latency_first_token_ms=latency_first_token_ms,
+                                    unified_5h_utilization=unified_5h_utilization,
+                                    unified_7d_utilization=unified_7d_utilization,
                                     response_metadata=response_metadata,
                                 )
-                                await self._finalize_api_key_reservation(
-                                    api_key_reservation,
-                                    model=payload.model,
-                                    usage=usage,
-                                    cache_creation_tier=cache_creation_tier,
-                                )
-                                return
-                        stall = stall_catcher.stall
-                        if stall is None:
-                            continue
-
-                        logger.warning(
-                            "anthropic_upstream_stall request_id=%s account_id=%s phase=%s bound_seconds=%g "
-                            "streamed_bytes=%s",
-                            request_id,
-                            account.id,
-                            stall.phase,
-                            stall.seconds,
-                            streamed_bytes,
-                        )
-
-                        await self._shielded(
-                            self._record_stall(
-                                account,
-                                stall,
-                                reservation=api_key_reservation if streamed_bytes else None,
-                                provider_name=provider_name,
-                                request_id=request_id,
-                                model=payload.model,
-                                reasoning_effort=reasoning_effort,
-                                started_at=started_at,
-                                api_key=api_key,
-                                session_id=session_id,
-                                useragent=useragent,
-                                useragent_group=useragent_group,
-                                usage=usage,
-                                latency_first_token_ms=latency_first_token_ms,
-                                cache_creation_tier=cache_creation_tier,
-                                unified_headers=unified_headers,
-                                quota_observed_at=quota_observed_at,
-                                unified_5h_utilization=unified_5h_utilization,
-                                unified_7d_utilization=unified_7d_utilization,
-                                response_metadata=response_metadata,
                             )
-                        )
-                        if not streamed_bytes:
-                            last_stall = stall
-                            last_error_status = 529
-                            last_error_message = str(stall)
-                            continue
+                            if not streamed_bytes:
+                                last_stall = stall
+                                last_error_status = 529
+                                last_error_message = str(stall)
+                                continue
 
-                        error_event = json.dumps(
-                            {"type": "error", "error": {"type": "overloaded_error", "message": str(stall)}},
-                            separators=(",", ":"),
-                        )
-                        yield f"event: error\ndata: {error_event}\n\n".encode()
-                        return
+                            error_event = json.dumps(
+                                {"type": "error", "error": {"type": "overloaded_error", "message": str(stall)}},
+                                separators=(",", ":"),
+                            )
+                            yield f"event: error\ndata: {error_event}\n\n".encode()
+                            return
+                        except (aiohttp.ClientError, TimeoutError, UpstreamStallTimeout) as exc:
+                            if circuit_guard is not None:
+                                await circuit_guard.record_failure(exc)
+                            raise
+                        except AnthropicProxyError as exc:
+                            if circuit_guard is not None and exc.code == "upstream_unreachable":
+                                await circuit_guard.record_failure(exc)
+                            raise
+                        finally:
+                            if circuit_guard is not None:
+                                await circuit_guard.release()
+                            if not keep_lease:
+                                await lease_holder.release()
                 except WarmupBusy:
                     continue
                 except upload_admission.UploadAdmissionTimeout as exc:
@@ -1020,7 +1040,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                         raise AnthropicProxyError(
                             last_error_status,
                             last_error_message or "Upstream unavailable",
-                            code=exhausted_error_code(last_error_status, _no_available_accounts_code(provider_name)),
+                            code=exhausted_error_code(last_error_status, no_available_accounts_code(provider_name)),
                         ) from exc
                     if not streamed_bytes and _pool_wait_should_hold(
                         exc, wait_enabled=wait_enabled, deadline=wait_deadline
@@ -1036,12 +1056,12 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                 if last_stall is not None:
                     await self._release_api_key_reservation(api_key_reservation)
                     raise AnthropicProxyError(529, str(last_stall), code="overloaded_error")
-                message = last_error_message or f"No available {_provider_label(provider_name)} accounts"
+                message = last_error_message or f"No available {provider_label(provider_name)} accounts"
                 eligibility = await self._provider_quota_eligibility(provider_name, quota_key, model=payload.model)
                 exhausted_error = AnthropicProxyError(
                     last_error_status or 503,
                     message,
-                    code=exhausted_error_code(last_error_status, _no_available_accounts_code(provider_name)),
+                    code=exhausted_error_code(last_error_status, no_available_accounts_code(provider_name)),
                     retry_at=None if last_error_status in TRANSIENT_UPSTREAM_STATUSES else eligibility.next_reset_at,
                 )
                 if _pool_wait_should_hold(exhausted_error, wait_enabled=wait_enabled, deadline=wait_deadline):
@@ -1066,23 +1086,42 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                 )
                 raise exhausted_error
 
-        return AnthropicProxyStream(
-            body=self._release_on_early_disconnect(
-                selection_refusal.watch(anchor.watch(body()), refuse), api_key_reservation
-            ),
-            media_type=media_type,
-        )
+        async def body() -> AsyncIterator[bytes]:
+            stream = _stream_body()
+            try:
+                async for chunk in stream:
+                    yield chunk
+            finally:
+                await close_async_iterator(stream)
+                await lease_holder.release()
+
+        try:
+            if first_account is not None:
+                selected_account_ids.add(first_account.id)
+            raw_body = body()
+            return AnthropicProxyStream(
+                body=self._release_on_early_disconnect(
+                    selection_refusal.watch(anchor.watch(raw_body), refuse),
+                    api_key_reservation,
+                    lease_holder=lease_holder,
+                    close_target=raw_body,
+                ),
+                media_type=media_type,
+            )
+        except BaseException:
+            await lease_holder.release()
+            raise
 
     async def resolve_message_request(
         self,
         payload: AnthropicMessageRequest,
     ) -> AnthropicResolvedMessageRequest:
         requested_model = payload.model
-        effective_model = _resolve_planner_model(requested_model)
+        effective_model = resolve_planner_model(requested_model)
         if effective_model != requested_model:
             payload = payload.model_copy(update={"model": effective_model})
-        provider_name = _messages_provider_name(payload)
-        quota_key = _messages_quota_key(payload, provider_name=provider_name)
+        provider_name = messages_provider_name(payload)
+        quota_key = messages_quota_key(payload, provider_name=provider_name)
         return AnthropicResolvedMessageRequest(
             payload=with_route_model_identity(payload),
             provider_name=provider_name,
@@ -1099,7 +1138,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         api_key: ApiKeyData | None = None,
     ) -> AnthropicFrameResult:
         normalized_headers = {key.lower(): value for key, value in inbound_headers.items()}
-        session_id = _anthropic_session_header(inbound_headers) or normalized_headers.get("x-agent-lb-seat")
+        session_id = anthropic_session_header(inbound_headers) or normalized_headers.get("x-agent-lb-seat")
         useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
         require_claude_code_client(useragent_group)
         account = await self._frame_account()
@@ -1117,7 +1156,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                     seat = normalized_headers.get("x-agent-lb-seat")
                     if seat:
                         headers["x-agent-lb-seat"] = seat
-                    headers = _frame_end_to_end_headers(headers)
+                    headers = frame_end_to_end_headers(headers)
                     async with session.request(
                         method,
                         url,
@@ -1130,7 +1169,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                         unified_headers = capture_unified_headers(resp.headers)
                         quota_observed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                         raw = await resp.read()
-                        result = AnthropicFrameResult(resp.status, raw, _frame_end_to_end_headers(resp.headers))
+                        result = AnthropicFrameResult(resp.status, raw, frame_end_to_end_headers(resp.headers))
                     if result.status_code != 401 or attempt == 1:
                         status = "success" if result.status_code < 400 else "error"
                         error_code = None if status == "success" else f"http_{result.status_code}"
@@ -1145,7 +1184,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             await self._persist_request_log(
                 account=account,
                 provider_name=ANTHROPIC_PROVIDER_NAME,
-                request_id=ensure_request_id(_request_id_from_headers(inbound_headers)),
+                request_id=ensure_request_id(request_id_from_headers(inbound_headers)),
                 model="frame",
                 started_at=started_at,
                 status=status,
@@ -1188,21 +1227,28 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
 
         if provider_name == ANTHROPIC_PROVIDER_NAME:
             require_claude_code_client(_request_log_useragent_fields(inbound_headers)[1])
-        account = await self._select_account(
+        account, lease = await self._select_account(
             model,
             provider_name=provider_name,
             exclude_account_ids=set(),
             sticky_key=None,
-            quota_key=_count_tokens_quota_key(provider_name),
+            quota_key=count_tokens_quota_key(provider_name),
             api_key=api_key,
+            lease_kind="response_create",
         )
-        access_token = await self._fresh_access_token(account)
-        headers = build_anthropic_headers(inbound_headers, access_token, provider_name=provider_name)
+        lease_holder = AccountLeaseHolder(self._load_balancer, lease)
+        circuit_guard = AnthropicCircuitGuard(account.id, provider_name)
         started_at = time.monotonic()
-        session_id = _anthropic_session_header(inbound_headers)
-        nbytes = len(json.dumps(body, separators=(",", ":")).encode())
-        upload_class = upload_admission.upload_class(inbound_headers)
+        session_id = anthropic_session_header(inbound_headers)
         try:
+            try:
+                await circuit_guard.enter()
+            except CircuitBreakerOpenError as exc:
+                raise circuit_open_error(provider_label(provider_name)) from exc
+            access_token = await self._fresh_access_token(account)
+            headers = build_anthropic_headers(inbound_headers, access_token, provider_name=provider_name)
+            nbytes = len(json.dumps(body, separators=(",", ":")).encode())
+            upload_class = upload_admission.upload_class(inbound_headers)
             async with admitted_http_session(account, session_id, nbytes, upload_class) as (session, admission_stack):
                 async with self._open_count_tokens_response(
                     session,
@@ -1212,6 +1258,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                 ) as resp:
                     await admission_stack.aclose()
                     raw = await resp.read()
+                    await circuit_guard.record_http_status(resp.status)
                     media_type = resp.headers.get("content-type") or "application/json"
                     return AnthropicCountTokensResult(status_code=resp.status, body=raw, media_type=media_type)
         except WarmupBusy as exc:
@@ -1222,7 +1269,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             await self._persist_request_log(
                 account=account,
                 provider_name=provider_name,
-                request_id=ensure_request_id(_request_id_from_headers(inbound_headers)),
+                request_id=ensure_request_id(request_id_from_headers(inbound_headers)),
                 model=model,
                 started_at=started_at,
                 status="error",
@@ -1237,11 +1284,15 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         except upstream_body.CompressionDeadlineExceeded as exc:
             raise compression_deadline_error() from exc
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            await circuit_guard.record_failure(exc)
             raise AnthropicProxyError(
                 502,
-                f"{_provider_label(provider_name)} count_tokens upstream request failed: {exc}",
+                f"{provider_label(provider_name)} count_tokens upstream request failed: {exc}",
                 code="upstream_error",
             ) from exc
+        finally:
+            await circuit_guard.release()
+            await lease_holder.release()
 
     async def resolve_count_tokens_request(
         self,
@@ -1249,11 +1300,11 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         *,
         model: str,
     ) -> AnthropicResolvedCountTokensRequest:
-        provider_name = _provider_name_for_model(model)
-        effective_model = _resolve_planner_model(model)
+        provider_name = provider_name_for_model(model)
+        effective_model = resolve_planner_model(model)
         if effective_model != model:
             model = effective_model
-            provider_name = _provider_name_for_model(model)
+            provider_name = provider_name_for_model(model)
             body = {**body, "model": model}
         return AnthropicResolvedCountTokensRequest(
             body=body,
@@ -1290,7 +1341,8 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         quota_key: str,
         api_key: ApiKeyData | None = None,
         traffic_class: TrafficClass = TRAFFIC_CLASS_FOREGROUND,
-    ) -> Account:
+        lease_kind: AccountLeaseKind | None = None,
+    ) -> tuple[Account, AccountLease | None]:
         if provider_name == ANTHROPIC_PROVIDER_NAME:
             quota_key = model_quota_key(model, quota_key)
         eligibility = await self._provider_quota_eligibility(
@@ -1303,7 +1355,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                 )
             if has_accounts:
                 raise selection_refusal.SelectionRefusal(
-                    429, "No selectable Anthropic account", code=_no_available_accounts_code(provider_name)
+                    429, "No selectable Anthropic account", code=no_available_accounts_code(provider_name)
                 )
         if not eligibility.account_ids and eligibility.blocked_count == 0 and provider_name in {"glm", "kimi"}:
             async with self._repo_factory() as repos:
@@ -1316,7 +1368,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             if has_no_balance:
                 raise selection_refusal.SelectionRefusal(
                     503,
-                    f"No balance for {_provider_label(provider_name)}; restore balance and reactivate the account.",
+                    f"No balance for {provider_label(provider_name)}; restore balance and reactivate the account.",
                     code="balance_exhausted",
                 )
         if not eligibility.account_ids and eligibility.blocked_count > 0:
@@ -1338,13 +1390,13 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             raise selection_refusal.SelectionRefusal(
                 429,
                 (
-                    f"All {_provider_label(provider_name)} accounts are cooling down "
+                    f"All {provider_label(provider_name)} accounts are cooling down "
                     f"for quota '{quota_key}'.{reset_suffix}"
                     if eligibility.cooldown_blocked_count == eligibility.blocked_count
-                    else f"No {_provider_label(provider_name)} accounts are currently eligible "
+                    else f"No {provider_label(provider_name)} accounts are currently eligible "
                     f"for quota '{quota_key}'.{weekly_suffix}{hold_suffix}{reset_suffix}"
                 ),
-                code=_quota_cooldown_code(provider_name),
+                code=quota_cooldown_code(provider_name),
                 retry_at=eligibility.next_reset_at,
             )
         app_settings = get_settings()
@@ -1371,6 +1423,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             headroom_reallocate=app_settings.anthropic_sticky_headroom_reallocation_enabled
             and not hold_until_exhausted,
             caller_policy=caller_policy,
+            lease_kind=lease_kind,
         )
         eligible_account_ids = (
             [account_id for account_id in eligibility.account_ids if account_id in scoped_account_ids]
@@ -1386,7 +1439,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         if selection.account is None and preferred and len(preferred) < len(eligible_account_ids):
             selection = await select(account_ids=eligible_account_ids)
         if selection.account is None:
-            labeled = f"No available {_provider_label(provider_name)} accounts"
+            labeled = f"No available {provider_label(provider_name)} accounts"
             raw_fallback = selection.error_message or labeled
             fallback = labeled if raw_fallback.startswith("No available accounts") else raw_fallback
             message, retry_at = await self._selection_failure_details(
@@ -1413,10 +1466,10 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             raise selection_refusal.SelectionRefusal(
                 503,
                 message,
-                code=selection.error_code or _no_available_accounts_code(provider_name),
+                code=selection.error_code or no_available_accounts_code(provider_name),
                 retry_at=retry_at,
             )
-        return selection.account
+        return selection.account, selection.lease
 
     async def _provider_quota_eligibility(
         self,
@@ -1435,7 +1488,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         settings = get_settings()
         fable_routing = provider_name == ANTHROPIC_PROVIDER_NAME and settings.anthropic_fable_routing_enabled
 
-        extra_usage_gate = provider_name == ANTHROPIC_PROVIDER_NAME and quota_key != _count_tokens_quota_key(
+        extra_usage_gate = provider_name == ANTHROPIC_PROVIDER_NAME and quota_key != count_tokens_quota_key(
             provider_name
         )
         async with self._repo_factory() as repos:
@@ -1904,8 +1957,9 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         self,
         body: AsyncIterator[bytes],
         reservation: ApiKeyUsageReservationData | None,
+        lease_holder: AccountLeaseHolder | None = None,
+        close_target: AsyncIterator[bytes] | None = None,
     ) -> AsyncIterator[bytes]:
-
         forwarded = False
         try:
             async for chunk in body:
@@ -1915,6 +1969,11 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             if not forwarded and reservation is not None:
                 await self._shielded(self._release_api_key_reservation(reservation))
             raise
+        finally:
+            await close_async_iterator(body)
+            await close_async_iterator(close_target)
+            if lease_holder is not None:
+                await lease_holder.release()
 
     async def _shielded(self, work: Coroutine[Any, Any, None]) -> None:
 
@@ -1979,71 +2038,19 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         api_key: ApiKeyData | None = None,
     ) -> Account:
         sticky_quota_key = affinity_quota_key or quota_key
-        sticky_key = f"{_sticky_prefix(provider_name)}:{sticky_quota_key}:session:{_hash_for_key(session_id)}"
-        account = await self._select_account(
+        sticky_key = f"{sticky_prefix(provider_name)}:{sticky_quota_key}:session:{hash_for_key(session_id)}"
+        account, _ = await self._select_account(
             model,
             provider_name=provider_name,
             exclude_account_ids=set(),
             sticky_key=sticky_key,
             quota_key=quota_key,
             api_key=api_key,
+            lease_kind=None,
         )
         async with self._repo_factory() as repos:
             await repos.sticky_sessions.upsert(sticky_key, account.id, kind=StickySessionKind.CODEX_SESSION)
         return account
-
-
-def _request_id_from_headers(headers: Mapping[str, str]) -> str | None:
-    return headers.get("x-request-id") or headers.get("request-id")
-
-
-def _anthropic_reasoning_effort(payload: AnthropicMessageRequest) -> str:
-    output_config = (payload.model_extra or {}).get("output_config")
-    effort = output_config.get("effort") if isinstance(output_config, dict) else None
-    if isinstance(effort, str) and effort in {"low", "medium", "high", "xhigh", "max"}:
-        return effort
-    thinking = payload.thinking or {}
-    budget = thinking.get("budget_tokens")
-    if thinking.get("type") == "enabled" and isinstance(budget, int) and not isinstance(budget, bool):
-        for threshold, band in ((4000, "low"), (16000, "medium"), (32000, "high")):
-            if budget < threshold:
-                return band
-        return "xhigh"
-    return "none"
-
-
-def _anthropic_quota_key(payload: AnthropicMessageRequest) -> str:
-    model = payload.model.lower()
-    if "haiku" in model:
-        return "anthropic_standard"
-    return model_quota_key(payload.model, "anthropic_top_thinking" if payload.thinking else "anthropic_top")
-
-
-def _resolve_planner_model(model: str) -> str:
-
-    if model.strip().lower() == _ANTHROPIC_PLANNER_MODEL_ALIAS:
-        return _ANTHROPIC_PLANNER_MODEL
-    return model
-
-
-def is_fable_model(model: str | None) -> bool:
-    return bool(model) and "fable" in model.lower()
-
-
-def _messages_provider_name(payload: AnthropicMessageRequest) -> str:
-    return _provider_name_for_model(payload.model)
-
-
-def _provider_name_for_model(model: str) -> str:
-    definition = get_additional_quota_definition_for_model(model)
-    if definition is not None and definition.quota_key == OPENROUTER_CREDITS_QUOTA_KEY:
-        return OPENROUTER_PROVIDER_NAME
-    return provider_name_for_anthropic_model(model)
-
-
-def _count_tokens_quota_key(provider_name: str) -> str:
-
-    return get_anthropic_compat_profile(provider_name).count_tokens_quota_key
 
 
 def _upstream_base_url(provider_name: str) -> str:
@@ -2052,182 +2059,6 @@ def _upstream_base_url(provider_name: str) -> str:
         return profile.upstream_base_url
     assert profile.upstream_settings_attr is not None
     return str(getattr(get_settings(), profile.upstream_settings_attr))
-
-
-def _messages_quota_key(payload: AnthropicMessageRequest, *, provider_name: str) -> str:
-    profile = get_anthropic_compat_profile(provider_name)
-    profile_quota_key = profile.quota_key(is_thinking=bool(payload.thinking))
-    if profile_quota_key is not None:
-        return profile_quota_key
-    if _anthropic_fast_mode_requested(payload):
-        return _ANTHROPIC_FAST_QUOTA_KEY
-    return _anthropic_quota_key(payload)
-
-
-def _messages_affinity_quota_key(payload: AnthropicMessageRequest, *, provider_name: str) -> str:
-    profile = get_anthropic_compat_profile(provider_name)
-    profile_quota_key = profile.quota_key(is_thinking=bool(payload.thinking))
-    if profile_quota_key is not None:
-        return profile_quota_key
-    base = _anthropic_quota_key(payload)
-    if base == "anthropic_opus":
-        base = "anthropic_top"
-    elif base == "anthropic_opus_thinking":
-        base = "anthropic_top_thinking"
-
-    return f"{base}_fable" if is_fable_model(payload.model) else base
-
-
-def _anthropic_fast_mode_requested(payload: AnthropicMessageRequest) -> bool:
-    speed = payload.speed
-    return isinstance(speed, str) and speed.strip().lower() == "fast"
-
-
-def _messages_sticky_key(
-    payload: AnthropicMessageRequest,
-    headers: Mapping[str, str],
-    *,
-    provider_name: str,
-    quota_key: str,
-) -> str | None:
-    header_value = _anthropic_session_header(headers)
-    prefix = _sticky_prefix(provider_name)
-    if header_value:
-        return f"{prefix}:{quota_key}:session:{_hash_for_key(header_value)}"
-    derived = _derive_anthropic_session_material(payload)
-    if not derived:
-        return None
-    return f"{prefix}:{quota_key}:derived:{_hash_for_key(derived)}"
-
-
-def _anthropic_sticky_key(
-    payload: AnthropicMessageRequest,
-    headers: Mapping[str, str],
-    *,
-    quota_key: str,
-) -> str | None:
-    header_value = _anthropic_session_header(headers)
-    if header_value:
-        return f"claude:{quota_key}:session:{_hash_for_key(header_value)}"
-    derived = _derive_anthropic_session_material(payload)
-    if not derived:
-        return None
-    return f"claude:{quota_key}:derived:{_hash_for_key(derived)}"
-
-
-def _sticky_prefix(provider_name: str) -> str:
-    return get_anthropic_compat_profile(provider_name).sticky_prefix
-
-
-def _provider_label(provider_name: str) -> str:
-    return get_anthropic_compat_profile(provider_name).label
-
-
-def _no_available_accounts_code(provider_name: str) -> str:
-    return get_anthropic_compat_profile(provider_name).no_available_accounts_code
-
-
-def _quota_cooldown_code(provider_name: str) -> str:
-    return get_anthropic_compat_profile(provider_name).quota_cooldown_code
-
-
-def anthropic_request_session_id(
-    payload: AnthropicMessageRequest,
-    headers: Mapping[str, str],
-) -> str | None:
-    user_id = payload.metadata.get("user_id") if payload.metadata is not None else None
-    if isinstance(user_id, str):
-        try:
-            decoded = json.loads(user_id)
-        except (json.JSONDecodeError, TypeError):
-            decoded = None
-        if isinstance(decoded, dict):
-            session_id = decoded.get("session_id")
-            if isinstance(session_id, str) and session_id.strip():
-                return session_id.strip()
-
-        legacy_match = re.search(
-            r"_session_([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
-            user_id.strip(),
-        )
-        if legacy_match is not None:
-            return legacy_match.group(1)
-
-    return _anthropic_session_header(headers)
-
-
-def _anthropic_session_header(headers: Mapping[str, str]) -> str | None:
-    normalized = {key.lower(): value for key, value in headers.items()}
-    for key in (
-        "x-claude-session-id",
-        "x-claude-conversation-id",
-        "x-claude-code-session-id",
-        "session_id",
-        "x-codex-session-id",
-        "x-codex-conversation-id",
-        "x-codex-turn-state",
-    ):
-        value = normalized.get(key)
-        if not isinstance(value, str):
-            continue
-        stripped = value.strip()
-        if stripped:
-            return stripped
-    return None
-
-
-def _derive_anthropic_session_material(payload: AnthropicMessageRequest) -> str | None:
-    parts: list[str] = [payload.model.lower()]
-    system_text = _anthropic_content_text(payload.system)
-    if system_text:
-        parts.append(system_text[:512])
-    for message in payload.messages:
-        if message.role == "user":
-            user_text = _anthropic_content_text(message.content)
-            if user_text:
-                parts.append(user_text[:512])
-            break
-    if len(parts) == 1:
-        return None
-    return json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
-
-
-def _anthropic_content_text(content: object) -> str | None:
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return None
-    parts: list[str] = []
-    for item in content:
-        text = getattr(item, "text", None)
-        if isinstance(text, str):
-            parts.append(text)
-            continue
-        if isinstance(item, Mapping):
-            value = cast(Mapping[str, object], item).get("text")
-            if isinstance(value, str):
-                parts.append(value)
-    return "".join(parts) if parts else None
-
-
-def _hash_for_key(value: str) -> str:
-    return sha256(value.encode("utf-8")).hexdigest()[:32]
-
-
-def _frame_end_to_end_headers(headers: Mapping[str, str]) -> dict[str, str]:
-    connection_tokens = {value.strip().lower() for value in headers.get("connection", "").split(",") if value.strip()}
-    excluded = connection_tokens | {
-        "connection",
-        "keep-alive",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailer",
-        "transfer-encoding",
-        "upgrade",
-        "content-length",
-    }
-    return {key: value for key, value in headers.items() if key.lower() not in excluded}
 
 
 def _pool_wait_should_hold(
@@ -2267,10 +2098,16 @@ def _pool_wait_delay_seconds(retry_at: int | None, *, now: float, remaining: flo
     return max(0.0, min(base + _POOL_WAIT_JITTER(), remaining))
 
 
-async def _release_upstream_response(resp: object) -> None:
-    release = getattr(resp, "release", None)
-    if release is None:
-        return
-    released = release()
-    if asyncio.iscoroutine(released) or asyncio.isfuture(released):
-        await released
+def _anthropic_sticky_key(
+    payload: AnthropicMessageRequest,
+    headers: Mapping[str, str],
+    *,
+    quota_key: str,
+) -> str | None:
+    header_value = anthropic_session_header(headers)
+    if header_value:
+        return f"claude:{quota_key}:session:{hash_for_key(header_value)}"
+    derived = derive_anthropic_session_material(payload)
+    if not derived:
+        return None
+    return f"claude:{quota_key}:derived:{hash_for_key(derived)}"

@@ -43,6 +43,10 @@ from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import (
     ResponsesRequest,
 )
+from app.core.openai.response_observability import (
+    extract_openai_response_metadata,
+    observe_openai_response,
+)
 from app.core.types import JsonValue
 from app.core.upstream_proxy import UpstreamProxyRouteError
 from app.core.utils.request_id import get_request_id
@@ -66,54 +70,6 @@ from app.modules.proxy._service.compact import (
 )
 from app.modules.proxy._service.compact import (
     _sticky_key_from_compact_payload as _sticky_key_from_compact_payload,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _active_http_bridge_instance_ring as _active_http_bridge_instance_ring,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _build_http_bridge_prewarm_text as _build_http_bridge_prewarm_text,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _durable_bridge_lookup_active_owner as _durable_bridge_lookup_active_owner,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _durable_bridge_lookup_allows_local_reuse as _durable_bridge_lookup_allows_local_reuse,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _effective_http_bridge_idle_ttl_seconds as _effective_http_bridge_idle_ttl_seconds,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _forwarded_http_bridge_session_key as _forwarded_http_bridge_session_key,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _has_http_bridge_response_output_marker as _has_http_bridge_response_output_marker,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_allow_durable_takeover as _http_bridge_allow_durable_takeover,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_can_local_recover_without_ring as _http_bridge_can_local_recover_without_ring,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_can_recover_during_drain as _http_bridge_can_recover_during_drain,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_continuity_lost_error_envelope as _http_bridge_continuity_lost_error_envelope,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_durable_lease_ttl_seconds as _http_bridge_durable_lease_ttl_seconds,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_endpoint_matches_current_instance as _http_bridge_endpoint_matches_current_instance,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_eviction_priority as _http_bridge_eviction_priority,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_has_durable_recovery_anchor as _http_bridge_has_durable_recovery_anchor,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_input_item_type as _http_bridge_input_item_type,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_is_context_overflow_error as _http_bridge_is_context_overflow_error,
@@ -2567,6 +2523,12 @@ class _WebSocketMixin:
                 if actual_service_tier is not None:
                     request_state.actual_service_tier = actual_service_tier
                     request_state.service_tier = actual_service_tier
+                if event_type in {"response.created", "response.completed", "response.incomplete", "response.failed"}:
+                    request_state.response_meta = extract_openai_response_metadata(
+                        event.response if event else None,
+                        raw_payload=payload,
+                        current=request_state.response_meta,
+                    )
                 completed_function_call_id = _facade()._response_output_item_done_function_call_id(payload)
                 if (
                     completed_function_call_id is not None
@@ -3178,9 +3140,21 @@ class _WebSocketMixin:
         reasoning_tokens = (
             usage.output_tokens_details.reasoning_tokens if usage and usage.output_tokens_details else None
         )
+        obs = extract_openai_response_metadata(
+            event.response if event else None,
+            raw_payload=payload,
+            current=request_state.response_meta,
+        )
+        request_state.response_meta = obs
         if not request_state.skip_request_log:
             request_log_response_id = (
                 _websocket_downstream_response_id(request_state) if settlement.record_success else response_id
+            )
+            observe_openai_response(
+                request_id=request_log_response_id,
+                account_id=account_id_value,
+                requested_model=request_state.model,
+                metadata=obs,
             )
             await proxy._write_request_log(
                 identity=request_state.identity,
@@ -3214,6 +3188,9 @@ class _WebSocketMixin:
                 upstream_proxy_fail_closed_reason=request_state.upstream_proxy_fail_closed_reason,
                 useragent=request_state.useragent,
                 useragent_group=request_state.useragent_group,
+                response_model=obs.response_model,
+                stop_reason=obs.stop_reason,
+                stop_details_category=obs.stop_details_category,
             )
 
     async def _emit_websocket_connect_failure(

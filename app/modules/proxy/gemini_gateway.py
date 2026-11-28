@@ -4,8 +4,7 @@ import asyncio
 import logging
 import math
 import time
-from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,13 +18,15 @@ from app.core.crypto import TokenEncryptor
 from app.core.exceptions import ProxyModelNotAllowed
 from app.core.providers.gemini import GEMINI_PROVIDER_NAME
 from app.core.providers.gemini_models import GEMINI_NEON_MODEL, GeminiModel
+from app.core.resilience.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerOpenError,
+    get_circuit_breaker_for_account,
+)
 from app.db.models import Account, AccountStatus, StickySessionKind
-from app.db.session import get_background_session
 from app.modules.accounts.auth_manager import AccountNotOwnedError, AuthManager, is_locally_owned
 from app.modules.accounts.gemini_project import GEMINI_TERMS_DISABLED_CODE
-from app.modules.accounts.repository import AccountsRepository
-from app.modules.api_keys.repository import ApiKeysRepository
-from app.modules.api_keys.service_data import ApiKeyData, ApiKeyRequestUsageBudget, ApiKeyUsageReservationData
+from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
 from app.modules.proxy.gemini_affinity import gemini_sticky_key
 from app.modules.proxy.gemini_code_assist import CodeAssistGeminiUpstream
 from app.modules.proxy.gemini_errors import GeminiGatewayError
@@ -36,19 +37,25 @@ from app.modules.proxy.gemini_request import (
     gemini_session_id,
     normalized_request,
 )
-from app.modules.proxy.gemini_stream import GeminiUsage
+from app.modules.proxy.gemini_stream import GeminiResponseMetadata, GeminiUsage
 from app.modules.proxy.gemini_upstream import GeminiUpstream, GeminiUpstreamCall, GeminiUpstreamError
-from app.modules.proxy.gemini_usage_log import GeminiLogEntry, record_gemini_request, settle_gemini_reservation
+from app.modules.proxy.gemini_usage_log import (
+    gemini_accounts_scope,
+    gemini_repo_factory,
+    gemini_usage_budget,
+    record_gemini_circuit_outcome,
+    record_gemini_failure,
+    record_gemini_finish,
+    release_gemini_resources,
+    scoped_account_ids,
+    settle_gemini_reservation,
+)
 from app.modules.proxy.gemini_validation import validation_failure_code
 from app.modules.proxy.load_balancer import LoadBalancer, selectable_accounts
 from app.modules.proxy.pool_exhaustion import gemini_terminal
-from app.modules.proxy.repo_bundle import ProxyRepositories
 from app.modules.proxy.request_admission import enforce_request_limits
 from app.modules.proxy.request_policy import validate_model_access
-from app.modules.proxy.sticky_repository import StickySessionsRepository
-from app.modules.quota_planner.repository import QuotaPlannerRepository
-from app.modules.request_logs.repository import RequestLogsRepository
-from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
+from app.modules.proxy.runtime_state import AccountLease
 
 logger = logging.getLogger(__name__)
 
@@ -56,45 +63,10 @@ MAX_ACCOUNT_ATTEMPTS = 3
 _UNSERVABLE_STATUSES = frozenset({AccountStatus.DEACTIVATED, AccountStatus.REAUTH_REQUIRED})
 
 
-@asynccontextmanager
-async def _repo_factory() -> AsyncIterator[ProxyRepositories]:
-    async with get_background_session() as session:
-        yield ProxyRepositories(
-            accounts=AccountsRepository(session),
-            usage=UsageRepository(session),
-            request_logs=RequestLogsRepository(session),
-            sticky_sessions=StickySessionsRepository(session),
-            api_keys=ApiKeysRepository(session),
-            additional_usage=AdditionalUsageRepository(session),
-            quota_planner=QuotaPlannerRepository(session),
-        )
-
-
-@asynccontextmanager
-async def _accounts_scope() -> AsyncIterator[AccountsRepository]:
-    async with _repo_factory() as repos:
-        yield repos.accounts
-
-
-def _scoped_account_ids(api_key: ApiKeyData | None) -> set[str] | None:
-    if api_key is None or not api_key.account_assignment_scope_enabled:
-        return None
-    return set(api_key.assigned_account_ids)
-
-
 def configured_upstream() -> GeminiUpstream:
     if get_settings().gemini_upstream == "fake":
         return FakeGeminiUpstream()
     return CodeAssistGeminiUpstream()
-
-
-def _usage_budget(body: dict[str, Any], raw_size: int) -> ApiKeyRequestUsageBudget:
-    config = body.get("generationConfig")
-    max_output = config.get("maxOutputTokens") if isinstance(config, dict) else None
-    return ApiKeyRequestUsageBudget(
-        input_tokens=max(1, raw_size // 4),
-        output_tokens=int(max_output) if isinstance(max_output, int) and max_output > 0 else None,
-    )
 
 
 @dataclass(slots=True)
@@ -110,19 +82,22 @@ class GeminiAttempt:
     started_at: float
     first_token_at: float | None
     session_id: str | None = None
+    account_lease: AccountLease | None = None
+    circuit_breaker: CircuitBreaker | None = None
+    circuit_probe: bool = False
     finished: bool = False
 
 
 class GeminiGateway:
     def __init__(self) -> None:
-        self._load_balancer = LoadBalancer(_repo_factory)
+        self._load_balancer = LoadBalancer(gemini_repo_factory)
         self._encryptor = TokenEncryptor()
         self._auxiliary_holds: dict[tuple[str, str], tuple[float, GeminiUpstreamError]] = {}
         self._auxiliary_last_used: dict[tuple[str, str], float] = {}
 
     async def require_pool(self, api_key: ApiKeyData | None) -> None:
-        scoped = _scoped_account_ids(api_key)
-        async with _repo_factory() as repos:
+        scoped = scoped_account_ids(api_key)
+        async with gemini_repo_factory() as repos:
             servable = any(
                 account.provider == GEMINI_PROVIDER_NAME
                 and account.status not in _UNSERVABLE_STATUSES
@@ -162,7 +137,7 @@ class GeminiGateway:
             api_key,
             request_model=choice.canonical_model,
             request_service_tier=None,
-            request_usage_budget=_usage_budget(body, raw_size),
+            request_usage_budget=gemini_usage_budget(body, raw_size),
             provider=GEMINI_PROVIDER_NAME,
             access_model=access_model,
         )
@@ -187,68 +162,108 @@ class GeminiGateway:
         refreshed: set[str] = set()
         last_error: GeminiGatewayError | None = None
         retry_account: Account | None = None
+        retry_lease: AccountLease | None = None
         selections = 0
         session_id = gemini_session_id(body)
         while retry_account is not None or selections < MAX_ACCOUNT_ATTEMPTS:
-            if retry_account is None:
+            account_lease: AccountLease | None = None
+            if retry_account is not None:
+                account = retry_account
+                account_lease = retry_lease
+                retry_account = None
+                retry_lease = None
+            else:
                 selections += 1
-            if choice.auxiliary and retry_account is None:
-                retry_account = await self._select_auxiliary(api_key, choice.canonical_model, excluded, last_error)
-            account = retry_account or await self._select(
-                api_key, choice.canonical_model, excluded, last_error, sticky_key
-            )
-            retry_account = None
-            upstream = configured_upstream()
-            started_at = time.monotonic()
+                if choice.auxiliary:
+                    account = await self._select_auxiliary(api_key, choice.canonical_model, excluded, last_error)
+                else:
+                    account, account_lease = await self._select(
+                        api_key, choice.canonical_model, excluded, last_error, sticky_key
+                    )
+            circuit_breaker: CircuitBreaker | None = None
+            circuit_probe = False
+            handed_off = False
             try:
-                access_token = await self._access_token(account, force=account.id in refreshed)
-            except GeminiGatewayError as exc:
-                last_error = exc
-                excluded.add(account.id)
-                continue
-            call = GeminiUpstreamCall(
-                model=choice.canonical_model,
-                effort=effort,
-                body=body,
-                access_token=access_token,
-                project_id=account.workspace_id,
-                account_id=account.id,
-            )
-            stream = upstream.stream(call)
-            try:
-                first: dict[str, Any] | None = await anext(stream)
-            except StopAsyncIteration:
-                first = None
-            except asyncio.CancelledError:
-                with CancelScope(shield=True):
-                    await self._log_failure(api_key, account, choice, effort, useragent, None, started_at, session_id)
-                raise
-            except GeminiUpstreamError as exc:
-                await self._log_failure(api_key, account, choice, effort, useragent, exc, started_at, session_id)
-                last_error = GeminiGatewayError(
-                    exc.status_code, exc.message, code=f"upstream_{exc.kind}", retry_at=exc.reset_at
-                )
-                if exc.kind == "auth" and account.id not in refreshed:
-                    refreshed.add(account.id)
-                    retry_account = account
+                upstream = configured_upstream()
+                started_at = time.monotonic()
+                try:
+                    access_token = await self._access_token(account, force=account.id in refreshed)
+                except GeminiGatewayError as exc:
+                    last_error = exc
+                    excluded.add(account.id)
                     continue
-                if not await self._mark_failure(account, choice, exc):
-                    raise last_error from exc
-                excluded.add(account.id)
-                continue
-            return GeminiAttempt(
-                api_key=api_key,
-                choice=choice,
-                reasoning_effort=effort,
-                useragent=useragent,
-                reservation=reservation,
-                account=account,
-                first_chunk=first,
-                rest=stream,
-                started_at=started_at,
-                first_token_at=time.monotonic() if first is not None else None,
-                session_id=session_id,
-            )
+                circuit_breaker = get_circuit_breaker_for_account(
+                    account.id, get_settings(), provider=GEMINI_PROVIDER_NAME
+                )
+                if circuit_breaker is not None:
+                    try:
+                        circuit_probe = await circuit_breaker.pre_call_check()
+                    except CircuitBreakerOpenError:
+                        last_error = GeminiGatewayError(
+                            503, "Gemini account circuit breaker is open.", code="upstream_circuit_open"
+                        )
+                        excluded.add(account.id)
+                        continue
+                call = GeminiUpstreamCall(
+                    model=choice.canonical_model,
+                    effort=effort,
+                    body=body,
+                    access_token=access_token,
+                    project_id=account.workspace_id,
+                    account_id=account.id,
+                )
+                stream = upstream.stream(call)
+                try:
+                    first: dict[str, Any] | None = await anext(stream)
+                except StopAsyncIteration:
+                    first = None
+                except asyncio.CancelledError:
+                    with CancelScope(shield=True):
+                        await record_gemini_failure(
+                            api_key, account, choice.canonical_model, effort, useragent, None, started_at, session_id
+                        )
+                    raise
+                except GeminiUpstreamError as exc:
+                    await record_gemini_failure(
+                        api_key, account, choice.canonical_model, effort, useragent, exc, started_at, session_id
+                    )
+                    await record_gemini_circuit_outcome(circuit_breaker, error=exc)
+                    last_error = GeminiGatewayError(
+                        exc.status_code, exc.message, code=f"upstream_{exc.kind}", retry_at=exc.reset_at
+                    )
+                    if exc.kind == "auth" and account.id not in refreshed:
+                        refreshed.add(account.id)
+                        retry_account = account
+                        retry_lease = account_lease
+                        account_lease = None
+                        continue
+                    if not await self._mark_failure(account, choice, exc):
+                        raise last_error from exc
+                    excluded.add(account.id)
+                    continue
+                handed_off = True
+                return GeminiAttempt(
+                    api_key=api_key,
+                    choice=choice,
+                    reasoning_effort=effort,
+                    useragent=useragent,
+                    reservation=reservation,
+                    account=account,
+                    first_chunk=first,
+                    rest=stream,
+                    started_at=started_at,
+                    first_token_at=time.monotonic() if first is not None else None,
+                    session_id=session_id,
+                    account_lease=account_lease,
+                    circuit_breaker=circuit_breaker,
+                    circuit_probe=circuit_probe,
+                )
+            finally:
+                if not handed_off:
+                    with CancelScope(shield=True):
+                        await release_gemini_resources(
+                            self._load_balancer, account_lease, circuit_breaker, circuit_probe
+                        )
         raise last_error or GeminiGatewayError(
             503, "No Gemini account could serve this request.", code="no_gemini_account"
         )
@@ -261,8 +276,8 @@ class GeminiGateway:
         last_error: GeminiGatewayError | None,
     ) -> Account:
         settings = get_settings()
-        scoped = _scoped_account_ids(api_key)
-        async with _repo_factory() as repos:
+        scoped = scoped_account_ids(api_key)
+        async with gemini_repo_factory() as repos:
             accounts = selectable_accounts(
                 [
                     account
@@ -302,20 +317,21 @@ class GeminiGateway:
         excluded: set[str],
         last_error: GeminiGatewayError | None,
         sticky_key: str | None,
-    ) -> Account:
+    ) -> tuple[Account, AccountLease | None]:
         selection = await self._load_balancer.select_account(
             sticky_key=sticky_key,
             sticky_kind=StickySessionKind.CODEX_SESSION if sticky_key else None,
             model=model,
             provider=GEMINI_PROVIDER_NAME,
-            account_ids=_scoped_account_ids(api_key),
+            account_ids=scoped_account_ids(api_key),
             exclude_account_ids=excluded,
             routing_strategy="usage_weighted",
             prefer_earlier_reset_accounts=True,
+            lease_kind="stream",
             is_unauthenticated=api_key is None,
         )
         if selection.account is not None:
-            return selection.account
+            return selection.account, selection.lease
         if last_error is not None:
             raise last_error
         retry_at = selection.retry_at.timestamp() if selection.retry_at is not None else None
@@ -330,11 +346,11 @@ class GeminiGateway:
 
     async def _access_token(self, account: Account, *, force: bool) -> str:
         try:
-            async with _repo_factory() as repos:
+            async with gemini_repo_factory() as repos:
                 latest = await repos.accounts.get_by_id(account.id)
                 if latest is None:
                     raise GeminiGatewayError(503, "The selected Gemini account no longer exists.", code="account_gone")
-                manager = AuthManager(repos.accounts, refresh_repo_factory=_accounts_scope)
+                manager = AuthManager(repos.accounts, refresh_repo_factory=gemini_accounts_scope)
                 fresh = await manager.ensure_fresh(latest, force=force)
                 return self._encryptor.decrypt(fresh.access_token_encrypted)
         except AccountNotOwnedError as exc:
@@ -376,37 +392,12 @@ class GeminiGateway:
                 exc.validation_url,
             )
             return True
+        if exc.kind == "invalid_request":
+            if exc.status_code == 403:
+                await self._load_balancer.record_error(account)
+            return False
         await self._load_balancer.record_error(account)
         return exc.kind == "transient"
-
-    async def _log_failure(
-        self,
-        api_key: ApiKeyData | None,
-        account: Account,
-        choice: GeminiModel,
-        effort: str,
-        useragent: str | None,
-        exc: GeminiUpstreamError | None,
-        started_at: float,
-        session_id: str | None,
-    ) -> None:
-        await record_gemini_request(
-            GeminiLogEntry(
-                api_key=api_key,
-                account=account,
-                model=choice.canonical_model,
-                reasoning_effort=effort,
-                useragent=useragent,
-                usage=None,
-                latency_ms=int((time.monotonic() - started_at) * 1000),
-                latency_first_token_ms=None,
-                status="error",
-                session_id=session_id,
-                error_code=f"upstream_{exc.kind}" if exc else "client_cancelled",
-                error_message=exc.message if exc else None,
-                upstream_status_code=exc.status_code if exc else None,
-            )
-        )
 
     async def finish(
         self,
@@ -415,37 +406,36 @@ class GeminiGateway:
         *,
         error: GeminiUpstreamError | None = None,
         cancelled: bool = False,
+        metadata: GeminiResponseMetadata | None = None,
     ) -> None:
         if attempt.finished:
             return
         attempt.finished = True
-        first_ms = (
-            int((attempt.first_token_at - attempt.started_at) * 1000) if attempt.first_token_at is not None else None
-        )
-        status = "error" if error is not None or cancelled else "success"
         try:
-            await record_gemini_request(
-                GeminiLogEntry(
-                    api_key=attempt.api_key,
-                    account=attempt.account,
-                    model=attempt.choice.canonical_model,
-                    reasoning_effort=attempt.reasoning_effort,
-                    useragent=attempt.useragent,
-                    usage=usage,
-                    latency_ms=int((time.monotonic() - attempt.started_at) * 1000),
-                    latency_first_token_ms=first_ms,
-                    status=status,
-                    session_id=attempt.session_id,
-                    error_code=f"upstream_{error.kind}"
-                    if error is not None
-                    else ("client_cancelled" if cancelled else None),
-                    error_message=error.message if error is not None else None,
-                    upstream_status_code=error.status_code if error is not None else None,
-                )
+            await record_gemini_finish(
+                api_key=attempt.api_key,
+                account=attempt.account,
+                model=attempt.choice.canonical_model,
+                reasoning_effort=attempt.reasoning_effort,
+                useragent=attempt.useragent,
+                usage=usage,
+                started_at=attempt.started_at,
+                first_token_at=attempt.first_token_at,
+                session_id=attempt.session_id,
+                error=error,
+                cancelled=cancelled,
+                metadata=metadata,
             )
+            await record_gemini_circuit_outcome(attempt.circuit_breaker, error=error, cancelled=cancelled)
             if error is not None:
                 await self._mark_failure(attempt.account, attempt.choice, error)
             elif not cancelled:
                 await self._load_balancer.record_success(attempt.account)
         finally:
-            await settle_gemini_reservation(attempt.reservation, model=attempt.choice.canonical_model, usage=usage)
+            with CancelScope(shield=True):
+                probe = attempt.circuit_probe
+                attempt.circuit_probe = False
+                lease = attempt.account_lease
+                attempt.account_lease = None
+                await release_gemini_resources(self._load_balancer, lease, attempt.circuit_breaker, probe)
+                await settle_gemini_reservation(attempt.reservation, model=attempt.choice.canonical_model, usage=usage)

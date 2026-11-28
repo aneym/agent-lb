@@ -4,6 +4,20 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+_SAFETY_FINISH_REASONS = frozenset(
+    {
+        "SAFETY",
+        "RECITATION",
+        "PROHIBITED_CONTENT",
+        "BLOCKLIST",
+        "SPII",
+        "IMAGE_SAFETY",
+        "IMAGE_PROHIBITED_CONTENT",
+        "MALFORMED_FUNCTION_CALL",
+        "UNEXPECTED_TOOL_CALL",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class GeminiUsage:
@@ -11,6 +25,50 @@ class GeminiUsage:
     output_tokens: int
     cached_input_tokens: int
     reasoning_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
+class GeminiResponseMetadata:
+    response_model: str | None = None
+    stop_reason: str | None = None
+    stop_details_category: str | None = None
+
+
+def _non_empty_str(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            return stripped
+    return None
+
+
+def metadata_from_chunk(
+    chunk: dict[str, Any],
+    current: GeminiResponseMetadata | None = None,
+) -> GeminiResponseMetadata:
+    base = current if current is not None else GeminiResponseMetadata()
+    response_model = _non_empty_str(chunk.get("modelVersion")) or base.response_model
+    finish_reason: str | None = None
+    candidates = chunk.get("candidates")
+    if isinstance(candidates, list):
+        for candidate in candidates:
+            if isinstance(candidate, dict):
+                candidate_finish = _non_empty_str(candidate.get("finishReason"))
+                if candidate_finish is not None:
+                    finish_reason = candidate_finish
+    prompt_feedback = chunk.get("promptFeedback")
+    block_reason = _non_empty_str(prompt_feedback.get("blockReason")) if isinstance(prompt_feedback, dict) else None
+    stop_reason = finish_reason or block_reason or base.stop_reason
+    stop_details_category = base.stop_details_category
+    if block_reason is not None:
+        stop_details_category = block_reason
+    elif finish_reason is not None and finish_reason.upper() in _SAFETY_FINISH_REASONS:
+        stop_details_category = finish_reason
+    return GeminiResponseMetadata(
+        response_model=response_model,
+        stop_reason=stop_reason,
+        stop_details_category=stop_details_category,
+    )
 
 
 def _count(metadata: dict[str, Any], key: str) -> int:

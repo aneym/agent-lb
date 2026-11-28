@@ -52,6 +52,7 @@ from app.modules.pools import headroom as pools_headroom
 from app.modules.pools.seat_quota_scheduler import build_seat_quota_scheduler
 from app.modules.proxy import api as proxy_api
 from app.modules.proxy.gemini_routes import router as gemini_router
+from app.modules.proxy.meta_service import close_http_client as close_meta_http_client
 from app.modules.proxy.models_api import router as models
 from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.proxy.ring_membership import (
@@ -312,6 +313,7 @@ async def lifespan(app: FastAPI):
             logger.warning("Shutdown timed out with %d token exchanges pending", shutdown_state.get_exchanges())
         try:
             await close_codex_pool()
+            await close_meta_http_client()
             await close_http_client()
         finally:
             try:

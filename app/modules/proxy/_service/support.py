@@ -16,6 +16,7 @@ from app.core.clients.failure_observation import UpstreamObservation
 from app.core.clients.proxy_websocket import UpstreamResponsesWebSocket
 from app.core.identity import RequestIdentity
 from app.core.openai.models import OpenAIEvent
+from app.core.openai.response_observability import OpenAIResponseMetadata
 from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute
 from app.core.utils.client_session import FACTORY_ATTRIBUTION, FactoryAttribution
@@ -248,6 +249,7 @@ class _WebSocketRequestState:
     draining_until_terminal: bool = False
     is_compaction_request: bool = False
     compaction_output_items: list[JsonValue] = field(default_factory=list)
+    response_meta: OpenAIResponseMetadata = field(default_factory=OpenAIResponseMetadata)
 
 
 def request_input_contains_compaction_trigger(input_items: JsonValue) -> bool:
@@ -422,26 +424,29 @@ def _record_websocket_route_metadata(
     request_state.upstream_proxy_fail_closed_reason = None
 
 
+_ROUTE_ATTRS = (
+    "upstream_proxy_route_mode",
+    "upstream_proxy_pool_id",
+    "upstream_proxy_endpoint_id",
+    "upstream_proxy_fallback_used",
+    "upstream_proxy_fail_closed_reason",
+)
+
+
 def _copy_websocket_route_metadata_to_session(
     session: _HTTPBridgeSession,
     request_state: _WebSocketRequestState,
 ) -> None:
-    session.upstream_proxy_route_mode = request_state.upstream_proxy_route_mode
-    session.upstream_proxy_pool_id = request_state.upstream_proxy_pool_id
-    session.upstream_proxy_endpoint_id = request_state.upstream_proxy_endpoint_id
-    session.upstream_proxy_fallback_used = request_state.upstream_proxy_fallback_used
-    session.upstream_proxy_fail_closed_reason = request_state.upstream_proxy_fail_closed_reason
+    for attr in _ROUTE_ATTRS:
+        setattr(session, attr, getattr(request_state, attr))
 
 
 def _copy_websocket_route_metadata_from_session(
     request_state: _WebSocketRequestState,
     session: _HTTPBridgeSession,
 ) -> None:
-    request_state.upstream_proxy_route_mode = session.upstream_proxy_route_mode
-    request_state.upstream_proxy_pool_id = session.upstream_proxy_pool_id
-    request_state.upstream_proxy_endpoint_id = session.upstream_proxy_endpoint_id
-    request_state.upstream_proxy_fallback_used = session.upstream_proxy_fallback_used
-    request_state.upstream_proxy_fail_closed_reason = session.upstream_proxy_fail_closed_reason
+    for attr in _ROUTE_ATTRS:
+        setattr(request_state, attr, getattr(session, attr))
 
 
 def _websocket_route_log_kwargs(request_state: _WebSocketRequestState) -> dict[str, str | bool | None]:
