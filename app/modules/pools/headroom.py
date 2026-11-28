@@ -14,6 +14,9 @@ from app.core.utils.time import utcnow
 from app.db.models import AccountStatus
 from app.dependencies import AccountsContext, get_accounts_context
 from app.modules.accounts.schemas import AccountSummary
+from app.modules.pools.gemini_quota import gemini_pool
+from app.modules.pools.neon_pick import build_neon_pick
+from app.modules.pools.schemas import PoolSummary
 from app.modules.pools.service import is_pool_usable
 
 CLIENTS = {"openai": ["codex"], "anthropic": ["claude"], "gemini": ["antigravity", "gemini"]}
@@ -109,20 +112,55 @@ def provider_headroom(summaries: list[AccountSummary], *, now: datetime, workers
     }
 
 
-def build_headroom(summaries: list[AccountSummary], *, now: datetime, workers_per_account: int) -> dict:
+def _gemini_headroom(pool: PoolSummary, *, now: datetime, workers_per_account: int) -> dict:
+    usable = pool.eligible_accounts
+    resets_at = _utc(pool.reset_at)
+    capacity = (pool.headroom_percent / 100.0) if pool.headroom_percent is not None else (1.0 if usable else 0.0)
+    workers = math.floor(capacity * workers_per_account) if usable else 0
+    return {
+        "provider": "gemini",
+        "clients": CLIENTS.get("gemini", []),
+        "accounts": pool.accounts,
+        "usable": usable,
+        "exhausted": usable == 0,
+        "five_hour_remaining_share": (
+            round(pool.five_hour_remaining_percent / 100.0, 4)
+            if pool.five_hour_remaining_percent is not None
+            else None
+        ),
+        "weekly_remaining_share": (
+            round(pool.weekly_remaining_percent / 100.0, 4) if pool.weekly_remaining_percent is not None else None
+        ),
+        "resets_at": resets_at.isoformat().replace("+00:00", "Z") if resets_at else None,
+        "resets_in_seconds": max(0, math.ceil((resets_at - now).total_seconds())) if resets_at else None,
+        "recommended_max_workers": max(workers, 1) if usable else 0,
+        "personal_accounts": 0,
+    }
+
+
+def build_headroom(
+    summaries: list[AccountSummary],
+    *,
+    now: datetime,
+    workers_per_account: int,
+    gemini: PoolSummary | None = None,
+) -> dict:
     by_provider: dict[str, list[AccountSummary]] = {}
     for summary in summaries:
         by_provider.setdefault(normalize_provider_name(summary.provider), []).append(summary)
+    pools = {
+        provider: {
+            "provider": provider,
+            "clients": CLIENTS.get(provider, []),
+            **provider_headroom(members, now=now, workers_per_account=workers_per_account),
+        }
+        for provider, members in sorted(by_provider.items())
+    }
+    if gemini is not None and "gemini" not in pools:
+        pools["gemini"] = _gemini_headroom(gemini, now=now, workers_per_account=workers_per_account)
     return {
         "generated_at": now.isoformat().replace("+00:00", "Z"),
-        "pools": {
-            provider: {
-                "provider": provider,
-                "clients": CLIENTS.get(provider, []),
-                **provider_headroom(members, now=now, workers_per_account=workers_per_account),
-            }
-            for provider, members in sorted(by_provider.items())
-        },
+        "pools": dict(sorted(pools.items())),
     }
 
 
@@ -133,4 +171,11 @@ async def pools_headroom(context: AccountsContext = Depends(get_accounts_context
         await context.service.list_accounts(),
         now=now,
         workers_per_account=get_settings().pool_headroom_workers_per_account,
+        gemini=gemini_pool(now=now),
     )
+
+
+@router.get("/neon-pick")
+async def pools_neon_pick(context: AccountsContext = Depends(get_accounts_context)) -> dict:
+    now = utcnow().replace(tzinfo=timezone.utc)
+    return build_neon_pick(await context.service.list_accounts(), now=now)

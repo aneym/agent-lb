@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar
@@ -22,6 +23,29 @@ from app.modules.federation.schemas import (
 from app.modules.federation.sticky_pin_schemas import StickyPinExchangeRequest, StickyPinExchangeResponse
 
 _Model = TypeVar("_Model", bound=BaseModel)
+_federation_http_session: aiohttp.ClientSession | None = None
+_federation_http_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_federation_http_session() -> aiohttp.ClientSession:
+    global _federation_http_session, _federation_http_loop
+    loop = asyncio.get_running_loop()
+    if _federation_http_session is None or _federation_http_session.closed or _federation_http_loop is not loop:
+        _federation_http_session = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(limit=128, limit_per_host=32),
+            trust_env=False,
+        )
+        _federation_http_loop = loop
+    return _federation_http_session
+
+
+async def close_federation_http_session() -> None:
+    global _federation_http_session, _federation_http_loop
+    session = _federation_http_session
+    _federation_http_session = None
+    _federation_http_loop = None
+    if session is not None and not session.closed:
+        await session.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,94 +105,106 @@ class AiohttpFederationPeerClient:
         return aiohttp.ClientTimeout(total=self._timeout_seconds)
 
     async def fetch_mirror(self, *, peer_url: str, token: str) -> FederationMirrorResponse:
-        async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
-            async with session.get(f"{peer_url}/api/federation/mirror", headers=_bearer_headers(token)) as response:
-                data = await _json_or_raise(response)
+        session = _get_federation_http_session()
+        async with session.get(
+            f"{peer_url}/api/federation/mirror",
+            headers=_bearer_headers(token),
+            timeout=self._timeout(),
+        ) as response:
+            data = await _json_or_raise(response)
         return _validated(FederationMirrorResponse, data)
 
     async def push_accounts(self, *, url: str, request: FederationPushRequest) -> FederationPushResponse:
-
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), trust_env=False) as session:
-            async with session.post(
-                f"{url.rstrip('/')}/api/federation/push",
-                json=request.model_dump(mode="json"),
-            ) as response:
-                data = await _json_or_raise(response)
+        session = _get_federation_http_session()
+        async with session.post(
+            f"{url.rstrip('/')}/api/federation/push",
+            json=request.model_dump(mode="json"),
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as response:
+            data = await _json_or_raise(response)
         return _validated(FederationPushResponse, data)
 
     async def push_usage_report(self, *, peer_url: str, token: str, report: FederationUsageReportRequest) -> None:
-        async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
-            async with session.post(
-                f"{peer_url}/api/federation/usage-report",
-                json=report.model_dump(mode="json"),
-                headers=_bearer_headers(token),
-            ) as response:
-                await _json_or_raise(response)
+        session = _get_federation_http_session()
+        async with session.post(
+            f"{peer_url}/api/federation/usage-report",
+            json=report.model_dump(mode="json"),
+            headers=_bearer_headers(token),
+            timeout=self._timeout(),
+        ) as response:
+            await _json_or_raise(response)
 
     async def push_request_logs(
         self, *, peer_url: str, token: str, body: FederationRequestLogsRequest
     ) -> FederationRequestLogsResponse:
-        async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
-            async with session.post(
-                f"{peer_url}/api/federation/request-logs",
-                json=body.model_dump(mode="json"),
-                headers=_bearer_headers(token),
-            ) as response:
-                data = await _json_or_raise(response)
+        session = _get_federation_http_session()
+        async with session.post(
+            f"{peer_url}/api/federation/request-logs",
+            json=body.model_dump(mode="json"),
+            headers=_bearer_headers(token),
+            timeout=self._timeout(),
+        ) as response:
+            data = await _json_or_raise(response)
         return _validated(FederationRequestLogsResponse, data)
 
     async def exchange_sticky_pins(
         self, *, peer_url: str, token: str, body: StickyPinExchangeRequest
     ) -> StickyPinExchangeResponse:
-        async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
-            async with session.post(
-                f"{peer_url}/api/federation/sticky-pins",
-                json=body.model_dump(mode="json"),
-                headers=_bearer_headers(token),
-            ) as response:
-                data = await _json_or_raise(response)
+        session = _get_federation_http_session()
+        async with session.post(
+            f"{peer_url}/api/federation/sticky-pins",
+            json=body.model_dump(mode="json"),
+            headers=_bearer_headers(token),
+            timeout=self._timeout(),
+        ) as response:
+            data = await _json_or_raise(response)
         return _validated(StickyPinExchangeResponse, data)
 
     async def checkout(
         self, *, peer_url: str, token: str, account_id: str, taker_instance_id: str, nonce: str
     ) -> CheckoutPeerResult:
-        async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
-            async with session.post(
-                f"{peer_url}/api/federation/checkout",
-                json={"account_id": account_id, "taker_instance_id": taker_instance_id, "nonce": nonce},
-                headers=_bearer_headers(token),
-            ) as response:
-                data = await _json_or_raise(response)
+        session = _get_federation_http_session()
+        async with session.post(
+            f"{peer_url}/api/federation/checkout",
+            json={"account_id": account_id, "taker_instance_id": taker_instance_id, "nonce": nonce},
+            headers=_bearer_headers(token),
+            timeout=self._timeout(),
+        ) as response:
+            data = await _json_or_raise(response)
         parsed = _validated(FederationCheckoutResponse, data)
         return CheckoutPeerResult(nonce=parsed.nonce, owner_instance_id=parsed.owner_instance_id, auth=parsed.auth)
 
     async def checkout_confirm(self, *, peer_url: str, token: str, nonce: str) -> None:
-        async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
-            async with session.post(
-                f"{peer_url}/api/federation/checkout/confirm",
-                json={"nonce": nonce},
-                headers=_bearer_headers(token),
-            ) as response:
-                await _json_or_raise(response)
+        session = _get_federation_http_session()
+        async with session.post(
+            f"{peer_url}/api/federation/checkout/confirm",
+            json={"nonce": nonce},
+            headers=_bearer_headers(token),
+            timeout=self._timeout(),
+        ) as response:
+            await _json_or_raise(response)
 
     async def abort(
         self, *, peer_url: str, token: str, nonce: str, account_id: str, direction: str, caller_instance_id: str
     ) -> str:
-        async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
-            async with session.post(
-                f"{peer_url}/api/federation/transfers/{nonce}/abort",
-                json={"account_id": account_id, "direction": direction, "caller_instance_id": caller_instance_id},
-                headers=_bearer_headers(token),
-            ) as response:
-                data = await _json_or_raise(response)
+        session = _get_federation_http_session()
+        async with session.post(
+            f"{peer_url}/api/federation/transfers/{nonce}/abort",
+            json={"account_id": account_id, "direction": direction, "caller_instance_id": caller_instance_id},
+            headers=_bearer_headers(token),
+            timeout=self._timeout(),
+        ) as response:
+            data = await _json_or_raise(response)
         return str(data["state"])
 
     async def transfer_status(self, *, peer_url: str, token: str, nonce: str) -> str:
-        async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
-            async with session.get(
-                f"{peer_url}/api/federation/transfers/{nonce}", headers=_bearer_headers(token)
-            ) as response:
-                data = await _json_or_raise(response)
+        session = _get_federation_http_session()
+        async with session.get(
+            f"{peer_url}/api/federation/transfers/{nonce}",
+            headers=_bearer_headers(token),
+            timeout=self._timeout(),
+        ) as response:
+            data = await _json_or_raise(response)
         return str(data["state"])
 
     async def checkin(
@@ -181,18 +217,19 @@ class AiohttpFederationPeerClient:
         auth: FederationAuthPayload,
         caller_instance_id: str,
     ) -> CheckinPeerResult:
-        async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
-            async with session.post(
-                f"{peer_url}/api/federation/checkin",
-                json={
-                    "account_id": account_id,
-                    "nonce": nonce,
-                    "caller_instance_id": caller_instance_id,
-                    "auth": auth.model_dump(mode="json"),
-                },
-                headers=_bearer_headers(token),
-            ) as response:
-                data = await _json_or_raise(response)
+        session = _get_federation_http_session()
+        async with session.post(
+            f"{peer_url}/api/federation/checkin",
+            json={
+                "account_id": account_id,
+                "nonce": nonce,
+                "caller_instance_id": caller_instance_id,
+                "auth": auth.model_dump(mode="json"),
+            },
+            headers=_bearer_headers(token),
+            timeout=self._timeout(),
+        ) as response:
+            data = await _json_or_raise(response)
         parsed = _validated(FederationTransferStatusResponse, data)
         return CheckinPeerResult(settled=parsed.state == "settled")
 

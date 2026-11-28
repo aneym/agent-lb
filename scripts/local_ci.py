@@ -35,7 +35,6 @@ REQUIRED_TOOLS = (
     "git",
     "uv",
     "bun",
-    "factory-lint",
     "docker",
     "trivy",
     "swift",

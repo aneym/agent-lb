@@ -71,7 +71,11 @@ class Door:
     def __init__(self, config: DoorConfig) -> None:
         self.config = config
         self.rails = Rails(config.rails, config.relay_key, config.pass_ttl_s)
-        self.upstream = httpx.AsyncClient(base_url=config.upstream, timeout=httpx.Timeout(1200.0, connect=10.0))
+        self.upstream = httpx.AsyncClient(
+            base_url=config.upstream,
+            timeout=httpx.Timeout(1200.0, connect=10.0),
+            limits=httpx.Limits(max_connections=1024, max_keepalive_connections=256),
+        )
         config.log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def log(self, line: dict[str, Any]) -> None:

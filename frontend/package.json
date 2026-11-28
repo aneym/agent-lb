@@ -11,7 +11,7 @@
     "format": "bun fmt --no-script",
     "format:check": "bun fmt --no-script --check",
     "shots": "scripts/aside-shots.sh",
-    "lint": "factory-lint check --changed",
+    "lint": "oxlint src && bun run typecheck",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -24,7 +24,12 @@ class RailsUnavailable(Exception):
 
 class Rails:
     def __init__(self, base: str, relay_key: str, pass_ttl_s: float) -> None:
-        self._client = httpx.AsyncClient(base_url=base, headers={"authorization": f"Bearer {relay_key}"}, timeout=10.0)
+        self._client = httpx.AsyncClient(
+            base_url=base,
+            headers={"authorization": f"Bearer {relay_key}"},
+            timeout=10.0,
+            limits=httpx.Limits(max_connections=256, max_keepalive_connections=64),
+        )
         self._ttl = pass_ttl_s
         self._passes: dict[str, tuple[float, BoxPass | None]] = {}
 

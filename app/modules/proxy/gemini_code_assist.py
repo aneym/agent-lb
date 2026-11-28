@@ -15,6 +15,7 @@ from app.core.clients.code_assist import (
     read_error_body,
     resolve_code_assist_project,
 )
+from app.core.clients.failure_observation import observe_text
 from app.core.clients.http import lease_http_session
 from app.core.config.settings import get_settings
 from app.core.providers.gemini_models import GEMINI_HYDROGEN_MODEL, GEMINI_NEON_MODEL
@@ -118,6 +119,7 @@ class CodeAssistGeminiUpstream:
                 ) as resp:
                     if resp.status >= 300:
                         raw = await read_error_body(resp.content)
+                        observe_text(raw.decode("utf-8", errors="replace"))
                         logger.warning("gemini_code_assist_failed path=%s status=%s", STREAM_PATH, resp.status)
                         raise upstream_error(resp.status, raw)
                     answered = False

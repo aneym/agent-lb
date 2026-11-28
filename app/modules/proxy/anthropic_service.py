@@ -1227,72 +1227,100 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
 
         if provider_name == ANTHROPIC_PROVIDER_NAME:
             require_claude_code_client(_request_log_useragent_fields(inbound_headers)[1])
-        account, lease = await self._select_account(
-            model,
-            provider_name=provider_name,
-            exclude_account_ids=set(),
-            sticky_key=None,
-            quota_key=count_tokens_quota_key(provider_name),
-            api_key=api_key,
-            lease_kind="response_create",
-        )
-        lease_holder = AccountLeaseHolder(self._load_balancer, lease)
-        circuit_guard = AnthropicCircuitGuard(account.id, provider_name)
         started_at = time.monotonic()
         session_id = anthropic_session_header(inbound_headers)
-        try:
+        nbytes = len(json.dumps(body, separators=(",", ":")).encode())
+        upload_class = upload_admission.upload_class(inbound_headers)
+        excluded_account_ids: set[str] = set()
+        last_result: AnthropicCountTokensResult | None = None
+        last_error: AnthropicProxyError | None = None
+        for _ in range(3):
             try:
-                await circuit_guard.enter()
-            except CircuitBreakerOpenError as exc:
-                raise circuit_open_error(provider_label(provider_name)) from exc
-            access_token = await self._fresh_access_token(account)
-            headers = build_anthropic_headers(inbound_headers, access_token, provider_name=provider_name)
-            nbytes = len(json.dumps(body, separators=(",", ":")).encode())
-            upload_class = upload_admission.upload_class(inbound_headers)
-            async with admitted_http_session(account, session_id, nbytes, upload_class) as (session, admission_stack):
-                async with self._open_count_tokens_response(
-                    session,
+                account, lease = await self._select_account(
+                    model,
                     provider_name=provider_name,
-                    headers=headers,
-                    json_body=body,
-                ) as resp:
-                    await admission_stack.aclose()
-                    raw = await resp.read()
-                    await circuit_guard.record_http_status(resp.status)
-                    media_type = resp.headers.get("content-type") or "application/json"
-                    return AnthropicCountTokensResult(status_code=resp.status, body=raw, media_type=media_type)
-        except WarmupBusy as exc:
-            raise AnthropicProxyError(503, "Warm-up concurrency is full", code="warmup_concurrency") from exc
-        except upload_admission.UploadAdmissionTimeout as exc:
-            code, message = _upload_admission_error(exc)
-            useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
-            await self._persist_request_log(
-                account=account,
-                provider_name=provider_name,
-                request_id=ensure_request_id(request_id_from_headers(inbound_headers)),
-                model=model,
-                started_at=started_at,
-                status="error",
-                error_code=code,
-                error_message=message,
-                api_key=api_key,
-                session_id=session_id,
-                useragent=useragent,
-                useragent_group=useragent_group,
-            )
-            raise AnthropicProxyError(503, message, code=code) from exc
-        except upstream_body.CompressionDeadlineExceeded as exc:
-            raise compression_deadline_error() from exc
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            await circuit_guard.record_failure(exc)
-            raise AnthropicProxyError(
-                502,
-                f"{provider_label(provider_name)} count_tokens upstream request failed: {exc}",
-                code="upstream_error",
-            ) from exc
-        finally:
-            await circuit_guard.release()
-            await lease_holder.release()
+                    exclude_account_ids=excluded_account_ids,
+                    sticky_key=None,
+                    quota_key=count_tokens_quota_key(provider_name),
+                    api_key=api_key,
+                    lease_kind="response_create",
+                )
+            except (selection_refusal.SelectionRefusal, AnthropicProxyError):
+                if last_result is not None:
+                    return last_result
+                if last_error is not None:
+                    raise last_error
+                raise
+            excluded_account_ids.add(account.id)
+            lease_holder = AccountLeaseHolder(self._load_balancer, lease)
+            circuit_guard = AnthropicCircuitGuard(account.id, provider_name)
+            try:
+                try:
+                    await circuit_guard.enter()
+                except CircuitBreakerOpenError:
+                    last_error = circuit_open_error(provider_label(provider_name))
+                    continue
+                access_token = await self._fresh_access_token(account)
+                headers = build_anthropic_headers(inbound_headers, access_token, provider_name=provider_name)
+                async with admitted_http_session(account, session_id, nbytes, upload_class) as (
+                    session,
+                    admission_stack,
+                ):
+                    async with self._open_count_tokens_response(
+                        session,
+                        provider_name=provider_name,
+                        headers=headers,
+                        json_body=body,
+                    ) as resp:
+                        await admission_stack.aclose()
+                        raw = await resp.read()
+                        await circuit_guard.record_http_status(resp.status)
+                        media_type = resp.headers.get("content-type") or "application/json"
+                        result = AnthropicCountTokensResult(
+                            status_code=resp.status, body=raw, media_type=media_type
+                        )
+                        if resp.status in {401, 429} or resp.status >= 500:
+                            last_result = result
+                            continue
+                        return result
+            except WarmupBusy as exc:
+                raise AnthropicProxyError(503, "Warm-up concurrency is full", code="warmup_concurrency") from exc
+            except upload_admission.UploadAdmissionTimeout as exc:
+                code, message = _upload_admission_error(exc)
+                useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
+                await self._persist_request_log(
+                    account=account,
+                    provider_name=provider_name,
+                    request_id=ensure_request_id(request_id_from_headers(inbound_headers)),
+                    model=model,
+                    started_at=started_at,
+                    status="error",
+                    error_code=code,
+                    error_message=message,
+                    api_key=api_key,
+                    session_id=session_id,
+                    useragent=useragent,
+                    useragent_group=useragent_group,
+                )
+                raise AnthropicProxyError(503, message, code=code) from exc
+            except upstream_body.CompressionDeadlineExceeded as exc:
+                raise compression_deadline_error() from exc
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                await circuit_guard.record_failure(exc)
+                last_error = AnthropicProxyError(
+                    502,
+                    f"{provider_label(provider_name)} count_tokens upstream request failed: {exc}",
+                    code="upstream_error",
+                )
+                continue
+            finally:
+                await circuit_guard.release()
+                await lease_holder.release()
+        if last_result is not None:
+            return last_result
+        if last_error is not None:
+            raise last_error
+        raise AnthropicProxyError(503, f"No available {provider_label(provider_name)} account", code="no_accounts")
 
     async def resolve_count_tokens_request(
         self,

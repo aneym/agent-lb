@@ -73,7 +73,11 @@ class HttpClientLease:
 async def observe_response(
     session: aiohttp.ClientSession, context: object, params: aiohttp.TraceRequestEndParams
 ) -> None:
-    if not params.url.path.rstrip("/").endswith(("/messages", "/responses", "/chat/completions", "/count_tokens")):
+    path = params.url.path.rstrip("/")
+    if path.endswith("/v1internal:streamGenerateContent"):
+        observe_status(params.response.status)
+        return
+    if not path.endswith(("/messages", "/responses", "/chat/completions", "/count_tokens")):
         return
     observe_status(params.response.status)
     if params.response.status >= 400:
@@ -100,7 +104,11 @@ async def _build_http_client() -> HttpClient:
     )
     try:
         websocket_session = aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(ssl=_build_ssl_context()),
+            connector=aiohttp.TCPConnector(
+                limit=settings.http_connector_limit,
+                limit_per_host=settings.http_connector_limit_per_host,
+                ssl=_build_ssl_context(),
+            ),
             timeout=aiohttp.ClientTimeout(total=None),
             trust_env=settings.upstream_websocket_trust_env,
         )

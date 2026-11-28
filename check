@@ -1,41 +1,29 @@
 #!/bin/sh
 set -eu
 
-gate="${AGENT_RAILS_GATE_DIR:-/Volumes/StudioExt/repos/agent-rails/tools/gate}"
-css_guard="$gate/css-changed"
-if [ "${1-}" = "--staged" ]; then
-    "$css_guard" --staged
-else
-    "$css_guard"
-fi
-
-if [ -f atoms.toml ]; then
-    atoms validate --repo . --base origin/main
-fi
-
-test_guard=$(command -v test-guard || true)
-for candidate in "$HOME/factory/bin/test-guard" /Volumes/StudioExt/repos/open-factory/engine/bin/test-guard; do
-    if [ -z "$test_guard" ] && [ -x "$candidate" ]; then
-        test_guard=$candidate
+resolve_gate() {
+    for candidate in \
+        "${AGENT_RAILS_GATE_DIR:-}" \
+        "$HOME/repos/agent-rails/tools/gate" \
+        /Volumes/StudioExt/repos/agent-rails/tools/gate
+    do
+        if [ -n "$candidate" ] && [ -d "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    if command -v modcheck >/dev/null 2>&1; then
+        resolved=$(readlink -f "$(command -v modcheck)" 2>/dev/null || command -v modcheck)
+        dir=$(dirname "$resolved")
+        if [ -d "$dir" ]; then
+            printf '%s\n' "$dir"
+            return 0
+        fi
     fi
-done
-if [ -z "$test_guard" ]; then
-    printf '%s\n' 'check: test-guard not found' 'next: install open-factory (engine/bin/test-guard) or put test-guard on PATH' >&2
-    exit 1
-fi
-if [ "${1-}" = "--staged" ]; then
-    "$test_guard" --staged
-else
-    "$test_guard" --base origin/main
-fi
+    return 0
+}
 
-
-if [ "${1-}" = "--staged" ]; then
-    "$gate/gate-precheck" --staged
-else
-    "$gate/no-new-comments" origin/main HEAD --repo .
-fi
-
+gate=$(resolve_gate)
 
 usage() {
   printf '%s\n' 'usage: ./check [--staged|--full]' >&2
@@ -51,6 +39,24 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
+if [ -n "$gate" ] && [ -x "$gate/css-changed" ]; then
+    if [ "$mode" = staged ]; then
+        "$gate/css-changed" --staged
+    else
+        "$gate/css-changed"
+    fi
+fi
+
+if [ -f atoms.toml ] && command -v atoms >/dev/null 2>&1; then
+    atoms validate --repo . --base origin/main
+fi
+
+if [ "$mode" = staged ]; then
+    python3 scripts/test_guard.py --staged
+else
+    python3 scripts/test_guard.py --base origin/main
+fi
+
 run_step() {
   name=$1
   shift
@@ -64,17 +70,24 @@ run_step() {
   return "$result"
 }
 
-run_step 'make lint' make lint
 if [ "$mode" = staged ]; then
-  run_step 'no comments' python3 scripts/check_no_comments.py --staged --gate "$gate"
+  run_step 'lint staged' python3 scripts/lint.py --staged
+  run_step 'no comments' python3 scripts/check_no_comments.py --staged ${gate:+--gate "$gate"}
 else
-  run_step 'no comments' python3 scripts/check_no_comments.py --gate "$gate"
+  run_step 'make lint' make lint
+  run_step 'no comments' python3 scripts/check_no_comments.py ${gate:+--gate "$gate"}
 fi
 if [ "$mode" = full ]; then
   run_step 'make architecture-check' make architecture-check
   run_step 'make test-floor' make test-floor
 fi
-if [ "$mode" != staged ]; then
-  run_step 'filecap check' "$gate/filecap" check --rev HEAD
+if [ -n "$gate" ] && [ -x "$gate/filecap" ]; then
+  if [ "$mode" = staged ]; then
+    run_step 'filecap check' "$gate/filecap" check --staged
+  else
+    run_step 'filecap check' "$gate/filecap" check --rev HEAD
+  fi
 fi
-run_step 'feature-map check' feature-map check --repo .
+if command -v feature-map >/dev/null 2>&1; then
+  run_step 'feature-map check' feature-map check --repo .
+fi

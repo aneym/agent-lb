@@ -1,5 +1,3 @@
-AGENT_RAILS_GATE_DIR ?= /Volumes/StudioExt/repos/agent-rails/tools/gate
-FACTORY_LINT ?= $(firstword $(shell command -v factory-lint) $(wildcard $(HOME)/factory/lint/bin/factory-lint /Volumes/StudioExt/repos/open-factory/engine/lint/bin/factory-lint))
 PYTEST_ARGS := -v -ra -o faulthandler_timeout=300 -o faulthandler_exit_on_timeout=true --timeout=180 --timeout-method=thread --durations=20
 POSTGRES_TEST_DATABASE_URL ?=
 CI_RUN_ID := $(shell date +%s)-$(shell echo $$$$)
@@ -8,13 +6,14 @@ CI_BASE_REF ?= origin/main
 CI_HEAD_REF ?=
 CI_EVENT_PATH ?=
 PYTHON ?= .venv/bin/python
+PYTHON_BIN := $(if $(wildcard $(PYTHON)),$(PYTHON),python3)
 SHELL := /bin/bash
 
 .PHONY: help
 help:
 	@printf '%s\n' \
 	  'Common targets:' \
-	  '  make lint                    factory-lint lint, format and type checks' \
+	  '  make lint                    native ruff, modcheck, and architecture checks' \
 	  '  make architecture-check      proxy architecture fitness ratchets' \
 	  '  make test-floor              kept-floor pytest guards, same as CI' \
 	  '  make package                 build and verify sdist/wheel' \
@@ -31,10 +30,10 @@ frontend-build: frontend-install
 
 .PHONY: lint architecture-check
 lint:
-	$(FACTORY_LINT) check --changed
+	$(PYTHON_BIN) scripts/lint.py --changed
 
 architecture-check:
-	$(PYTHON) scripts/check_proxy_architecture.py
+	$(PYTHON_BIN) scripts/check_proxy_architecture.py
 
 .PHONY: test-floor test-e2e
 test-floor:

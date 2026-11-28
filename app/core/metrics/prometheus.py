@@ -266,6 +266,12 @@ if PROMETHEUS_AVAILABLE:
         ["requested_model", "response_model"],
         registry=REGISTRY,
     )
+    anthropic_model_rewrites_total = Counter(
+        "agent_lb_anthropic_model_rewrites_total",
+        "Total Anthropic route-level model rewrites",
+        ["reason", "requested_model", "routed_model"],
+        registry=REGISTRY,
+    )
 
     def make_scrape_registry() -> CollectorRegistryLike:
         if MULTIPROCESS_MODE:
@@ -322,6 +328,7 @@ else:
     event_loop_lag_events_total: CounterLike | None = None
     anthropic_refusals_total: CounterLike | None = None
     anthropic_model_mismatches_total: CounterLike | None = None
+    anthropic_model_rewrites_total: CounterLike | None = None
 
     def make_scrape_registry() -> None:
         return None
@@ -342,6 +349,7 @@ __all__ = [
     "account_lease_stale_reclaimed_total",
     "accounts_total",
     "anthropic_model_mismatches_total",
+    "anthropic_model_rewrites_total",
     "anthropic_refusals_total",
     "bridge_instance_mismatch_total",
     "bridge_forward_latency_seconds",

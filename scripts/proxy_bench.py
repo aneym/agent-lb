@@ -35,6 +35,7 @@ def arguments():
     parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--events", type=int, default=200)
     parser.add_argument("--gap-ms", type=float, default=2)
+    parser.add_argument("--body-kb", type=int, default=0)
     parser.add_argument("--out", type=Path, default=Path("proxy-bench.json"))
     parser.add_argument("--usage-out", type=Path)
     parser.add_argument("--profile", type=Path)
@@ -133,10 +134,17 @@ def stats(values):
 async def drive(session, base, path, kind, key, args, fake):
     model = "claude-sonnet-4-5" if kind == "anthropic" else "gpt-5.4"
     body: dict[str, Any] = {"model": model, "stream": True}
+    pad = ("x" * (args.body_kb * 1024)) if args.body_kb > 0 else ""
     if kind == "anthropic":
-        body.update(max_tokens=8192, messages=[{"role": "user", "content": key}])
+        messages = [{"role": "user", "content": key}]
+        if pad:
+            messages.insert(0, {"role": "user", "content": pad})
+        body.update(max_tokens=8192, messages=messages)
     else:
-        body.update(input=[{"role": "user", "content": [{"type": "input_text", "text": key}]}], store=False)
+        content = [{"type": "input_text", "text": key}]
+        if pad:
+            content.insert(0, {"type": "input_text", "text": pad})
+        body.update(input=[{"role": "user", "content": content}], store=False)
     started = time.perf_counter()
     byte_at = None
     arrived = []
@@ -144,6 +152,8 @@ async def drive(session, base, path, kind, key, args, fake):
     types = []
     buffer = b""
     headers = {"Content-Type": "application/json", "x-request-id": key}
+    if kind == "anthropic":
+        headers["User-Agent"] = "claude-cli/2.1.0"
     async with session.post(
         base + path, data=json.dumps(body), headers=headers, skip_auto_headers={"Content-Type"}
     ) as response:

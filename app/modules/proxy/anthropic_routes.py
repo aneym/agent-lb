@@ -10,6 +10,7 @@ from app.core.anthropic.models import AnthropicMessageRequest
 from app.core.auth.dependencies import validate_proxy_api_key
 from app.core.config.settings import get_settings
 from app.core.exceptions import ProxyAuthError, ProxyModelNotAllowed, ProxyRateLimitError
+from app.core.metrics import prometheus as prom
 from app.core.providers import get_anthropic_compat_profile
 from app.core.types import JsonValue
 from app.core.upload_admission import is_headless_claude_user_agent
@@ -67,6 +68,35 @@ def warn_untagged_headless_opus(request: Request, model: str | None) -> None:
     logger.warning("untagged_headless_opus model=%s session=%s", model, session)
 
 
+def _record_model_rewrite(reason: str, requested_model: str, routed_model: str) -> dict[str, str]:
+    session = (get_client_session_id() or "-")[:80]
+    logger.info(
+        "anthropic_model_route_rewrite reason=%s requested_model=%s routed_model=%s session=%s",
+        reason,
+        requested_model,
+        routed_model,
+        session,
+    )
+    if prom.anthropic_model_rewrites_total is not None:
+        prom.anthropic_model_rewrites_total.labels(
+            reason=reason,
+            requested_model=requested_model,
+            routed_model=routed_model,
+        ).inc()
+    return {
+        "x-agent-lb-route-rewrite": reason,
+        "x-agent-lb-requested-model": requested_model,
+        "x-agent-lb-routed-model": routed_model,
+    }
+
+
+def _apply_rewrite_headers(response: Response, rewrite_headers: dict[str, str] | None) -> Response:
+    if rewrite_headers:
+        for key, value in rewrite_headers.items():
+            response.headers[key] = value
+    return response
+
+
 @anthropic_routes_v1_router.post(
     "/messages",
     response_model=None,
@@ -89,14 +119,22 @@ async def v1_messages(
     context: AnthropicProxyContext = Depends(get_anthropic_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
+    original_model = payload.model
+    rewrite_headers: dict[str, str] | None = None
     payload = classifier_payload(payload, request.headers)
+    if payload.model != original_model:
+        rewrite_headers = _record_model_rewrite("classifier_route", original_model, payload.model)
     ccgpt_model = resolve_ccgpt_model(payload.model)
     if ccgpt_model and (claude_model := server_tool_claude_model(payload)):
+        before_server_tool = payload.model
         payload = payload.model_copy(update={"model": claude_model})
+        if claude_model != before_server_tool:
+            rewrite_headers = _record_model_rewrite("server_tool_route", original_model, claude_model)
     elif ccgpt_model:
-        return await ccgpt_messages_response(
+        response = await ccgpt_messages_response(
             request, payload, get_proxy_context(request), api_key, ccgpt_model[1], ccgpt_model[0]
         )
+        return _apply_rewrite_headers(response, rewrite_headers)
     resolved_request = await context.service.resolve_message_request(payload)
     payload = resolved_request.payload
     validate_model_access(api_key, payload.model)
@@ -138,18 +176,21 @@ async def v1_messages(
         except AnthropicProxyError as exc:
             await release_reservation(reservation)
             return anthropic_proxy_error_response(exc)
-        return Response(content=body, media_type=stream.media_type)
+        return _apply_rewrite_headers(Response(content=body, media_type=stream.media_type), rewrite_headers)
 
-    return StreamingResponse(
-        inject_sse_keepalives(
-            anthropic_stream_error_guard(
-                stream.body,
-                streaming=bool(payload.stream),
-                api_key_reservation=reservation,
+    return _apply_rewrite_headers(
+        StreamingResponse(
+            inject_sse_keepalives(
+                anthropic_stream_error_guard(
+                    stream.body,
+                    streaming=bool(payload.stream),
+                    api_key_reservation=reservation,
+                ),
+                get_settings().sse_keepalive_interval_seconds,
             ),
-            get_settings().sse_keepalive_interval_seconds,
+            media_type=stream.media_type,
         ),
-        media_type=stream.media_type,
+        rewrite_headers,
     )
 
 

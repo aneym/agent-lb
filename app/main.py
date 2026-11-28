@@ -41,6 +41,7 @@ from app.modules.conversation_archive import api as conversation_archive_api
 from app.modules.dashboard import api as dashboard_api
 from app.modules.dashboard_auth import api as dashboard_auth_api
 from app.modules.federation import api as federation_api
+from app.modules.federation.peer_client import close_federation_http_session
 from app.modules.federation.push import build_federation_push_scheduler
 from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.firewall import api as firewall_api
@@ -313,6 +314,7 @@ async def lifespan(app: FastAPI):
             logger.warning("Shutdown timed out with %d token exchanges pending", shutdown_state.get_exchanges())
         try:
             await close_codex_pool()
+            await close_federation_http_session()
             await close_meta_http_client()
             await close_http_client()
         finally:
