@@ -48,7 +48,7 @@ def routing_changes(source: Path, home: Path, uninstall: bool) -> dict[Path, str
         if full_disk.startswith(MODELS_MARKER):
             changes[full_path] = None
         old_policy = home / POLICY_DIR / "ROUTING.md"
-        pointer = "# Routing reference\n\nRead `~/.claude/rules/workflow.md`, then `~/.claude/docs/models/core.md`. This compatibility pointer contains no duplicate policy.\n"
+        pointer = "# Routing reference\n\nRead `~/.agents/skills/model-routing/SKILL.md`, then `~/.claude/docs/models/core.md`. This compatibility pointer contains no duplicate policy.\n"
         if not old_policy.exists() and not old_policy.is_symlink():
             changes[old_policy] = pointer
         elif old_policy.is_file() and not old_policy.is_symlink():

@@ -70,10 +70,10 @@ def installed(tmp_path: Path, policy_checkout):
 
     with pytest.raises(subprocess.CalledProcessError) as missing:
         install("--print")
-    assert str(home / ".claude/rules/floors.md") in missing.value.stderr
-    floors = home / ".claude/rules/floors.md"
-    floors.parent.mkdir(parents=True, exist_ok=True)
-    floors.write_text("# Install fixture\n\n## Nested section\n\nFixture body.\n")
+    assert str(home / ".agents/AGENTS.md") in missing.value.stderr
+    kernel = home / ".agents/AGENTS.md"
+    kernel.parent.mkdir(parents=True, exist_ok=True)
+    kernel.write_text("# Install fixture\n\n## Nested section\n\nFixture body.\n")
     Path(env["ROUTE_MODELS_CACHE"]).write_text(
         json.dumps({"ts": datetime.now(timezone.utc).isoformat(), "models": ["gpt-6.1-sol"]})
     )
@@ -117,13 +117,13 @@ def test_install_renders_core_within_budget_and_is_idempotent(installed) -> None
     full = home / ".claude/docs/models-full.md"
     rendered = models.read_text()
     codex = (home / ".codex/AGENTS.md").read_text()
-    assert "## Install fixture\n\n### Nested section\n\nFixture body." in codex
+    assert "# Install fixture\n\n## Nested section\n\nFixture body." in codex
     assert "{{inline:" not in codex
     assert len(models.read_bytes()) <= BUDGET, len(models.read_bytes())
     assert rendered.startswith(installer().MODELS_MARKER)
     assert rendered.split("\n\n", 1)[1] == core_text()
     assert not full.exists()
-    assert "`~/.claude/rules/workflow.md`" in (home / ".agents/policy/coding-agents/ROUTING.md").read_text()
+    assert "`~/.agents/skills/model-routing/SKILL.md`" in (home / ".agents/policy/coding-agents/ROUTING.md").read_text()
     installed_settings = json.loads(settings.read_text())
     for key, value in other.items():
         if key != "permissions":

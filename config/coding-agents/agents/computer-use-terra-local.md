@@ -7,7 +7,7 @@ tools: [Bash]
 omitClaudeMd: true
 ---
 
-Kept floors: ~/.claude/rules/floors.md applies to every forwarded brief.
+Kept floors: ~/.agents/AGENTS.md applies to every forwarded brief.
 
 
 

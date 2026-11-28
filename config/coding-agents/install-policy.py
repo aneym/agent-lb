@@ -8,7 +8,6 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), "hooks"))
 import json
 import os
-import re
 import shutil
 import subprocess
 import time
@@ -129,8 +128,13 @@ def main() -> int:
             ) from exc
 
     try:
-        desired_docs = {
-            codex_path: (
+        desired_docs: dict[Path, str] = {}
+        codex_managed_by_rails = codex_path.is_symlink() and (
+            str(codex_path.resolve()).startswith(str(args.home / ".local/share/rails/store/skills"))
+            or codex_path.resolve() == (args.home / ".agents/AGENTS.md").resolve()
+        )
+        if not codex_managed_by_rails:
+            desired_docs[codex_path] = (
                 uninstall_adapter(originals[codex_path], codex_path)
                 if args.uninstall
                 else install_codex_doc(
@@ -138,8 +142,7 @@ def main() -> int:
                     render_codex_body((source / "codex-AGENTS.md").read_text(), args.home),
                     codex_path,
                 )
-            ),
-        }
+            )
         if not args.preserve_claude_md:
             desired_docs[claude_path] = (
                 uninstall_adapter(originals[claude_path], claude_path)

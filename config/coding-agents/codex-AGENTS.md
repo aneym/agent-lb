@@ -1,25 +1,3 @@
-# Working with Alex
-
-Deliver the requested outcome end to end with your own judgment; make reversible decisions within scope. Preserve unrelated work. Report what is done, the evidence, and what is blocked or unverified, briefly. No report or summary Markdown files unless the brief names the path.
-
-{{inline: claude-config rules/floors.md}}
-
-**Live-Verified World Gold Standard Rule.** Before recommending or locking in a library, framework, SDK, UI kit, protocol, runtime, or tool, check primary sources live. Cite the current stable release and date, latest commit date or vendor update, maintenance/deprecation status, and why it fits better than the leading current alternative or a thin native implementation. Check the repo’s actual pin and compatibility when it exists. Keep stale, niche, or superseded picks out of the recommendation. Mark evidence gaps unverified and keep those picks out of decisions until checked.
-
-Every turn in a T3 thread ends through the a0 skill (`~/.agents/skills/a0/SKILL.md`).
-
-Main checkouts stay on the default branch; other branches get a worktree (`git worktree add <repos>/<repo>-wt/<topic> -b <branch> origin/main`, or `delegate_task` with `isolation: "worktree"`). Never `git switch` a shared checkout. Landing: agent-rails via `scripts/studio_merge.py merge <branch>`; other repos fast-forward to origin/main.
-
-Stop only the PID you recorded when you started a process (`echo $!` or a pidfile), with `kill <pid>`; free a port with `port-free <port>`; leave orphans to factory-worker-reap.service. Never a parent PID, and never stop processes by name on any host, over ssh too: no pkill, killall, or kill fed by pgrep, pidof, ps or lsof -t (`lsof -t … | xargs kill` killed Tailscale on 2026-10-16).
-
-On macOS pkill and killall treat every word after the first name as another name, not an option: a stray `1` in `pkill -f "sleep 600" -P 1`, sent over ssh, stopped most of Alex's running programs on 2026-11-10.
-
-Studio can never be wired to Ethernet. Never ask anyone to wire Studio to Ethernet or suggest it. Treat Studio as having poor Wi-Fi connectivity and never depend on Studio. Nothing besides iOS builds needs to run on Book. All self-hosted services, agents, and workflows run strictly on our servers (never on Book or Studio).
-
-A doc or page for Alex is visual work: build it through the share-page skill (`~/.agents/skills/share-page/SKILL.md`) following `~/.claude/docs/plan-docs.md`, with a picture in each section, and read the light, dark, desk and phone shots `rails-one-doc` prints before you call it done.
-
-Machines and browser: `~/.agents/shared/MACHINES.md`. CLIs: `~/.agents/shared/CLI-INDEX.md`. Tests: load `test-audit` before writing or changing one. Research Alex asks for: run `x-pass "<question>"` once.
-
-Delegation: delegate bounded work to cheaper workers, answer simple asks directly. `~/.agent-lb/bin/route resolve <alias>` gives the model id; set `reasoning_effort` and `fork_turns: "none"`. Luna for mechanical, Terra for bounded implementation, Sol for hard diagnosis. Details: `~/.claude/docs/codex-delegation.md`.
+{{inline: canonical agents kernel}}
 
 {{codex tool scope}}

@@ -54,15 +54,14 @@ def install_adapter(text: str, template: str, path: Path) -> str:
 
 def render_codex_body(body: str, home: Path) -> str:
     body = body.replace("{{codex tool scope}}", scope_note(home))
-    placeholder = "{{inline: claude-config rules/floors.md}}"
+    placeholder = "{{inline: canonical agents kernel}}"
     if placeholder not in body:
         return body
-    floors = home / ".claude/rules/floors.md"
+    kernel = home / ".agents/AGENTS.md"
     try:
-        content = floors.read_text()
+        content = kernel.read_text()
     except OSError as exc:
-        raise ValueError(f"cannot inline required floors file {floors}: {exc}") from exc
-    content = re.sub(r"(?m)^(#{1,6})(?=\s)", r"#\1", content)
+        raise ValueError(f"cannot inline required agents kernel {kernel}: {exc}") from exc
     return body.replace(placeholder, content.rstrip())
 
 
