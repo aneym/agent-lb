@@ -121,10 +121,9 @@ MAX_PARSE = 20000
 MAX_DEPTH = 6
 PIPE_TO_SHELL = re.compile(r"\|\s*" + PATH + r"(?:bash|sh|zsh|dash|ksh|fish)\b(?!\s+-c)")
 MESSAGE = (
-    "BLOCKED: direct `gh pr merge` skips the merge gate. agent-rails lands with "
+    "merge-gate-guard (warn, the call runs): direct `gh pr merge` skips the merge gate. agent-rails lands with "
     "`python3 scripts/studio_merge.py merge <branch>`; other repos fast-forward push to origin/main; "
-    "Open Factory gated repos queue with `of gate queue <pr>`. "
-    "`gh pr merge <pr> --disable-auto` (dequeue) is still allowed."
+    "Open Factory gated repos queue with `of gate queue <pr>`."
 )
 
 
@@ -433,12 +432,11 @@ def main():
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
     if not isinstance(command, str) or not command:
         return 0
+    if merged(command):
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": MESSAGE}}))
     if os.environ.get(RECEIPT_ENV):
         print(RECEIPT)
-    if not merged(command):
-        return 0
-    print(MESSAGE, file=sys.stderr)
-    return 2
+    return 0
 
 
 if __name__ == "__main__":

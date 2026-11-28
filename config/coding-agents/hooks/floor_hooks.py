@@ -24,10 +24,12 @@ FLOOR_HOOKS = {
     "outbound-send-guard.py": "real people: no direct Messages, Mail, SMS or mail-API send without a Rails hold receipt for that exact text",
     "claim-code-redact.py": "secrets: Rails one-use claim codes (rac_) never show in tool output",
     "claim_codes.py": "secrets: the claim code pattern and mask shared by claim-code-redact and the floor runner",
+    "clerk-secret-guard.py": "secrets: product agent homes never read the prod Clerk secret, agent-secret's custody store or the test token script",
+    "personal-token-guard.py": "his accounts: no agent session names or reads Alex's or Nate's personal Vercel tokens without Alex's yes",
 }
 NON_FLOOR_GUARDS = {
     "t3-live-restart-guard.py": "house rule: live T3 restarts use the nightly installer",
-    "merge-gate-guard.py": "house rule: agent-rails main lands only through studio_merge",
+    "merge-gate-guard.py": "house rule, warn only: agent-rails main lands through studio_merge; gh-write-guard keeps the git floor on gh pr merge",
     "seat-guard.py": "seat routing advice, not a kept floor",
     "upload-cap-guard.py": "house rule: bulk uploads off Studio are rate capped and run overnight",
     "stop-by-name-guard.py": "house rule: processes stop by the id recorded at start, never by name",
@@ -35,10 +37,8 @@ NON_FLOOR_GUARDS = {
     "land-open-guard.py": "house rule: a turn does not end while the rails-one land it started still runs",
     "wrangler-d1-guard.py": "house rule: ad-hoc SQL on the live rails-one D1 goes through rails-one-sql, not raw wrangler d1 execute --remote",
     "t3-db-guard.py": "house rule: no direct reads of a live T3 state database (statev2.sqlite); use the t3 CLI or T3 MCP",
-    "clerk-secret-guard.py": "house rule: product agent homes never read the prod Clerk secret, agent-secret's custody store or the test token script",
     "bridge-restart-guard.py": "house rule: rails-chat-bridge restarts go through the host updater or a Factory drained roll, never by hand",
     "probe-home-guard.py": "house rule: preserve send-probe homes and homes marked .rails-keep-home",
-    "personal-token-guard.py": "house rule: no agent session names or reads Alex's or Nate's personal Vercel tokens without Alex's yes",
 }
 FLOOR_TEXT = "BLOCKED: Dangerous command"
 INLINE_FLOOR = "dangerous-command"

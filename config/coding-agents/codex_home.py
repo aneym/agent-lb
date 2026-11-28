@@ -37,6 +37,8 @@ PY_FLOOR_HOOKS = (
     "rm-dynamic-deny",
     "user-manager-guard.py",
     "host-credential-guard.py",
+    "clerk-secret-guard.py",
+    "personal-token-guard.py",
 )
 SH_FLOOR_HOOKS = ("dangerous-command-guard.sh", "railway-vars-guard.sh", "link-cli-guard.sh")
 BASH_FLOOR_COMMANDS = tuple(f'/usr/bin/python3 "$HOME/.claude/hooks/{name}"' for name in PY_FLOOR_HOOKS) + tuple(

@@ -4,45 +4,41 @@ import hashlib
 import json
 import os
 import re
-import socket
 import sqlite3
-import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import approval_ask  # type: ignore[missing-import]
+import approval_scope  # type: ignore[missing-import]
+import t3_yes  # type: ignore[missing-import]
+import yes_words  # type: ignore[missing-import]
 
 HERE = Path(__file__).resolve().parent
 GRANDFATHERED = HERE / "approval_grandfathered.txt"
-ROOTS = (".agent-rails/approvals", ".open-factory/approvals", ".agent-rails/lanes/orchestrator-refs")
+ROOTS = (
+    ".agent-rails/approvals",
+    ".open-factory/approvals",
+    ".agent-rails/lanes/orchestrator-refs",
+)
 LEGACY = {
     ".agent-rails/approvals": {"delete", "stash", "browser", "provider", "data-delete"},
     ".agent-rails/lanes/orchestrator-refs": {"destructive"},
     ".open-factory/approvals": set(),
 }
-HELD = {"destructive", "provider", "data-delete"}
+IRREVERSIBLE = {"destructive", "provider", "data-delete", "delete"}
+FLOORS = IRREVERSIBLE | {"browser", "stash", "desktop"}
 DELETES = {"delete", "data-delete", "destructive"}
-NAMED = {
-    "browser": re.compile(r"\b(?:browsers?|chrome|tabs?)\b", re.I),
-    "stash": re.compile(r"\bstash", re.I),
-    "delete": re.compile(r"\b(?:delet\w*|remov\w*|rm|clean\w*)\b", re.I),
-    "desktop": re.compile(r"\b(?:open\w*|launch\w*|show\w*)\b", re.I),
-}
 NAME = re.compile(r"(?:owner|alex)-[A-Za-z0-9._-]+\.md")
-UUID = re.compile(r"(?<![0-9a-f-])(?:mcp:)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![0-9a-f-])")
-QUOTE = re.compile(r"""^[\s>*_-]*Quote[s]?\s*:\s*[*_]*\s*["“](.+)["”]""", re.M | re.I)
-COVERS = re.compile(r"^[\s>*_-]*Covers\s*:\s*(.+)$", re.M | re.I)
-EXPIRES = re.compile(r"^[\s>*_-]*Expires\s*:(.*)$", re.M | re.I)
-MOMENT = re.compile(r"\s*`?(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?)`?\s*")
-SENDERS = {"web", "mobile"}
-FRAGMENT = 12
-TOTAL = 30
+UUID = r"(?:mcp:)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+EVIDENCE = re.compile(
+    r"^[\s>*_-]*Evidence\s*:\s*[`*_]*\s*t3\s+`?" + UUID + r"\b",
+    re.MULTILINE | re.IGNORECASE,
+)
+COVERS = re.compile(r"^[\s>*_-]*Covers\s*:\s*(.+)$", re.MULTILINE | re.IGNORECASE)
 LIFE = timedelta(hours=24)
-LONGEST = timedelta(days=7)
 FORMAT = (
-    'a record needs Evidence: t3 <thread id> <message id>, Quote: "<Alex\'s exact words>", '
-    "Covers: <action> and optionally Expires: <ISO time, at most 7 days after his message>"
+    "a record cites Evidence: t3 <id of the message Alex typed> and Covers: <floor>"
 )
 
 
@@ -53,10 +49,19 @@ class Refused(Exception):
 def resolve(ref):
     home = os.path.expanduser("~")
     path = re.sub(r"^(?:~|\$HOME|\$\{HOME\})/", home + "/", ref)
-    if ".." in path.split("/") or os.path.islink(path) or not NAME.fullmatch(os.path.basename(path)):
+    if (
+        ".." in path.split("/")
+        or os.path.islink(path)
+        or not NAME.fullmatch(os.path.basename(path))
+    ):
         return None
-    root = next((root for root in ROOTS if os.path.dirname(path) == os.path.join(home, root)), None)
-    if root is None or os.path.realpath(os.path.dirname(path)) != os.path.join(os.path.realpath(home), root):
+    root = next(
+        (root for root in ROOTS if os.path.dirname(path) == os.path.join(home, root)),
+        None,
+    )
+    if root is None or os.path.realpath(os.path.dirname(path)) != os.path.join(
+        os.path.realpath(home), root
+    ):
         return None
     return path
 
@@ -89,188 +94,114 @@ def moment(value):
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
 
 
-PEERS = ("ax102", "ax42")
-PEER_QUERY = """
-import json, os, sqlite3, sys
-from pathlib import Path
-store = Path(os.path.expanduser("~")) / ".t3/userdata/statev2.sqlite"
-keys = sys.argv[1:]
-rows = []
-if store.is_file() and keys:
-    with sqlite3.connect(store.as_uri() + "?mode=ro", uri=True, timeout=3) as conn:
-        rows = [r[0] for r in conn.execute(
-            "SELECT payload_json FROM orchestration_v2_projection_messages WHERE role='user' AND message_id IN ("
-            + ",".join("?" * len(keys)) + ")", keys)]
-print(json.dumps(rows))
-"""
-
-
-def local_rows(keys):
-    store = Path(os.path.expanduser("~")) / ".t3/userdata/statev2.sqlite"
-    if not store.is_file():
-        return []
-    marks = ",".join("?" * len(keys))
-    with sqlite3.connect(store.as_uri() + "?mode=ro", uri=True, timeout=3) as conn:
-        return [
-            payload
-            for (payload,) in conn.execute(
-                f"SELECT payload_json FROM orchestration_v2_projection_messages WHERE role='user' AND message_id IN ({marks})",
-                keys,
-            )
-        ]
-
-
-def peer_rows(keys):
-    me = socket.gethostname().split(".")[0].lower()
-    peers = os.environ.get("APPROVAL_T3_PEERS", " ".join(PEERS)).split()
-    rows = []
-    for peer in peers:
-        if peer.lower() == me:
-            continue
-        try:
-            done = subprocess.run(
-                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", peer, "python3", "-", *keys],
-                input=PEER_QUERY,
-                capture_output=True,
-                text=True,
-                timeout=15,
-                check=False,
-            )
-            if done.returncode == 0:
-                rows += json.loads(done.stdout or "[]")
-        except (OSError, subprocess.SubprocessError, ValueError):
-            continue
-    return rows
-
-
-def messages(ids):
-    keys = sorted(ids)
-    rows = local_rows(keys)
-    if len(rows) < len(keys):
-        rows += peer_rows(keys)
-    found, seen = [], set()
-    for payload in rows:
-        message = json.loads(payload)
-        if message.get("id") in seen:
-            continue
-        if message.get("createdBy") == "user" and message.get("creationSource") in SENDERS:
-            seen.add(message.get("id"))
-            found.append(message)
-    return found
-
-
-def spaced(text):
-    return " ".join(text.split())
-
-
-def fragments(quote):
-    parts = [spaced(part) for part in re.split(r"\.\.\.|…", quote)]
-    parts = [part for part in parts if part]
-    weight = [len(part.replace(" ", "")) for part in parts]
-    if not parts or min(weight) < FRAGMENT or sum(weight) < TOTAL:
+def his_row(text):
+    ids = EVIDENCE.findall(text)
+    if len(ids) != 1:
         raise Refused(
-            f"each quoted fragment needs {FRAGMENT} or more letters of Alex's words and the quote {TOTAL} or more"
+            f"it needs exactly one Evidence: t3 <id of the message Alex typed>; {FORMAT}"
         )
-    return parts
-
-
-def ordered(parts, text):
-    at = 0
-    for part in parts:
-        at = text.find(part, at)
-        if at < 0:
-            return False
-        at += len(part)
-    return True
-
-
-def evidence(text):
-    quotes = QUOTE.findall(text)
-    if not quotes:
-        raise Refused("it quotes no words of Alex's")
-    pieces = [fragments(quote) for quote in quotes]
-    ids = set(UUID.findall(text))
-    found = messages(ids) if ids else []
-    if not found:
-        raise Refused("it names no T3 message id of a message Alex typed")
-    matched = []
-    for quote, parts in zip(quotes, pieces):
-        hits = [m for m in found if ordered(parts, spaced(m.get("text", "")))]
-        if not hits:
-            raise Refused(f"no named message Alex typed holds the quote {quote[:60]!r} in order")
-        matched.append(max(hits, key=lambda m: moment(m["createdAt"])))
-    return matched
-
-
-def expiry(text, matched):
-    start = min(moment(message["createdAt"]) for message in matched)
-    stated = EXPIRES.findall(text)
-    if not stated:
-        return start + LIFE
-    ends = []
-    for value in stated:
-        found = MOMENT.fullmatch(value)
-        if not found:
-            raise Refused(f"its Expires line {value.strip()[:40]!r} is not a bare ISO time")
-        try:
-            ends.append(moment(found[1]))
-        except ValueError:
-            raise Refused(f"its Expires line {value.strip()[:40]!r} is not a bare ISO time") from None
-    return min(min(ends), start + LONGEST)
+    try:
+        found = t3_yes.lookup(ids)
+    except t3_yes.Unread as exc:
+        raise Refused(str(exc)) from None
+    if not found["messages"]:
+        raise Refused(
+            "its Evidence id is not a message Alex typed in T3 (web or mobile, never edited, not a scheduled task)"
+        )
+    message = found["messages"][0]
+    age = datetime.now(timezone.utc) - moment(message["createdAt"])
+    if age > LIFE or age < -timedelta(minutes=5):
+        raise Refused(
+            f"his message at {message['createdAt']} is not inside the last 24 h"
+        )
+    return message, found
 
 
 def covers(text):
     words = set()
     for line in COVERS.findall(text):
-        words |= {word.strip("`*_.,;:()").casefold() for word in re.split(r"[,\s]+", line)}
+        words |= {
+            word.strip("`*_.,;:()").casefold() for word in re.split(r"[,\s]+", line)
+        }
     return words
 
 
-def quoted(text, action):
-    matched = evidence(text)
-    until = expiry(text, matched)
-    result = {"basis": "t3", "messages": [m["id"] for m in matched], "expires": until.isoformat()}
-    if until <= datetime.now(timezone.utc):
-        raise Refused(f"it expired at {until.isoformat()}")
-    if action is None:
-        return result
-    if action not in NAMED:
-        raise Refused(f"no quote record covers the {action!r} floor")
-    if action not in covers(text):
+def covered(action, text):
+    return bool(({action} | (DELETES if action in DELETES else set())) & covers(text))
+
+
+def checked(path, body, text, action, command):
+    if action is not None and action not in FLOORS:
+        raise Refused(f"no T3 record covers the {action!r} floor; it takes an Ask line")
+    if action in IRREVERSIBLE:
+        raise Refused(
+            f"no T3 citation lifts the {action!r} floor. " + approval_scope.HOW
+        )
+    if action is not None and not covered(action, text):
         raise Refused(f"its Covers line does not name {action!r}; {FORMAT}")
-    if not any(NAMED[action].search(quote) for quote in QUOTE.findall(text)):
-        raise Refused(f"Alex's quoted words do not name the {action!r} action themselves")
-    return result
+    message, found = his_row(text)
+    if action is not None:
+        approval_ask.ledger(
+            found["source"],
+            f"t3-{message['id']}",
+            path,
+            body,
+            action,
+            command,
+            datetime.now(timezone.utc),
+        )
+    return {
+        "basis": "t3",
+        "messages": [message["id"]],
+        "source": found["source"],
+    }
 
 
 def verdict(ref, action=None, line=None, command=None):
     path = resolve(ref)
     if path is None:
-        return {"ok": False, "reason": "the record is not an owner- or alex- file in an approvals directory"}
+        return {
+            "ok": False,
+            "reason": "the record is not an owner- or alex- file in an approvals directory",
+        }
     try:
         body = Path(path).read_bytes()
     except OSError:
         return {"ok": False, "reason": "the record cannot be read"}
     text = body.decode("utf-8", "replace")
-    if line is not None and not any(row.strip().strip("`") == line for row in text.splitlines()):
-        return {"ok": False, "reason": "the record does not hold this exact command line"}
-    if grandfathered(path, body, action):
-        return {"ok": True, "basis": "grandfathered"}
-    if action is not None and approval_ask.carries(text):
-        if not ({action} | (DELETES if action in DELETES else set())) & covers(text):
-            return {"ok": False, "reason": f"its Covers line does not name {action!r}"}
-        return approval_ask.spend(path, body, text, action, line if command is None else command)
-    if action in HELD:
+    if line is not None and not any(
+        row.strip().strip("`") == line for row in text.splitlines()
+    ):
         return {
             "ok": False,
-            "reason": f"the {action} floor takes only a grandfathered record or one whose Ask line names an owner "
-            "ask the person answered yes, covering the paths it lists for 24 h from when it was written",
+            "reason": "the record does not hold this exact command line on a line of its own;",
         }
+    if grandfathered(path, body, action):
+        return {"ok": True, "basis": "grandfathered"}
+    acted = line if command is None else command
+    if action is not None and approval_ask.carries(text):
+        if not covered(action, text):
+            return {"ok": False, "reason": f"its Covers line does not name {action!r}"}
+        return approval_ask.spend(
+            path, body, text, action, acted, action in IRREVERSIBLE
+        )
     try:
-        return {"ok": True, **quoted(text, action)}
-    except Refused as exc:
+        return {"ok": True, **checked(path, body, text, action, acted)}
+    except (
+        Refused,
+        approval_ask.Refused,
+        approval_scope.Refused,
+        t3_yes.Unread,
+    ) as exc:
         return {"ok": False, "reason": str(exc)}
-    except (sqlite3.Error, ValueError, KeyError, TypeError, AttributeError) as exc:
+    except (
+        sqlite3.Error,
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        AttributeError,
+    ) as exc:
         return {"ok": False, "reason": f"the evidence could not be checked: {exc}"}
 
 
@@ -287,6 +218,8 @@ def main(argv):
     parser.add_argument("--command")
     args = parser.parse_args(argv)
     result = verdict(args.record, args.action, args.line, args.command)
+    if not result["ok"]:
+        result["next"] = yes_words.COVER
     print(json.dumps(result))
     return 0 if result["ok"] else 1
 
