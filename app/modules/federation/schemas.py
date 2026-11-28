@@ -247,6 +247,9 @@ class FederationRequestLogRow(BaseModel):
     request_kind: str
     requested_at: datetime
     model: str
+    response_model: str | None = None
+    stop_reason: str | None = None
+    stop_details_category: str | None = None
     plan_type: str | None = None
     source: str | None = None
     useragent: str | None = None

@@ -40,6 +40,9 @@ class RequestLogEntry(DashboardModel):
     request_kind: str = "normal"
     model: str
     requested_model_alias: str | None = None
+    response_model: str | None = None
+    stop_reason: str | None = None
+    stop_details_category: str | None = None
     source: str | None = None
     useragent: str | None = None
     useragent_group: str | None = None

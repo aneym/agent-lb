@@ -14,24 +14,31 @@ from hashlib import sha256
 from typing import Any, cast
 
 import aiohttp
-from pydantic import ValidationError
 from yarl import URL
 
 from app.core import upload_admission
 from app.core.anthropic.entrypoint_label import relabel_billing_block
 from app.core.anthropic.extra_usage import EXTRA_USAGE_QUOTA_KEY as _ANTHROPIC_EXTRA_USAGE_QUOTA_KEY
-from app.core.anthropic.extra_usage import extra_usage_blocked
+from app.core.anthropic.extra_usage import (
+    extra_usage_blocked,
+    extra_usage_tripwire_error as _extra_usage_tripwire_error,
+    extra_usage_tripwire_header as _extra_usage_tripwire_header,
+)
 from app.core.anthropic.models import (
     AnthropicErrorEvent,
     AnthropicMessageRequest,
     AnthropicUsage,
     cache_creation_1h_tokens,
 )
-from app.core.anthropic.parsing import collect_usage_from_chunk as _collect_usage_from_chunk
+from app.core.anthropic.parsing import (
+    AnthropicResponseMetadata,
+    collect_response_from_chunk as _collect_response_from_chunk,
+    parse_json_response as _parse_json_response,
+)
 from app.core.anthropic.quota_headers import capture_unified_headers
-from app.core.anthropic.quota_headers import parse_reset_epoch as _parse_reset_epoch
 from app.core.anthropic.quota_headers import parse_unified_utilization as _parse_unified_utilization
 from app.core.anthropic.quota_keys import model_quota_key
+from app.core.anthropic.response_observability import observe_anthropic_response, upstream_requested_model
 from app.core.auth.refresh import classify_refresh_error
 from app.core.balancer import TRAFFIC_CLASS_FOREGROUND, TrafficClass
 from app.core.balancer.error_rules import match_error_rule
@@ -75,7 +82,6 @@ from app.modules.proxy.anthropic_connect_retry import (
 from app.modules.proxy.anthropic_outbound_headers import build_anthropic_headers
 from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError, require_claude_code_client
 from app.modules.proxy.anthropic_rate_limits import (
-    get_header,
     kimi_monthly_rate_limit_error,
     rate_limit_error_from_response,
 )
@@ -129,15 +135,6 @@ _FRAME_UNAVAILABLE_STATUSES = frozenset(
 )
 
 _ANTHROPIC_PLANNER_MODEL = "claude-opus-5-5"
-
-
-_ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER = "anthropic-ratelimit-unified-overage-in-use"
-_ANTHROPIC_UNIFIED_STATUS_HEADERS = (
-    "anthropic-ratelimit-unified-status",
-    "anthropic-ratelimit-unified-5h-status",
-    "anthropic-ratelimit-unified-7d-status",
-)
-_ANTHROPIC_UNIFIED_ALLOWED_STATUSES = frozenset({"allowed", "allowed_warning"})
 
 
 _OVERLOADED_RETRY_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
@@ -470,6 +467,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                         quota_observed_at: datetime | None = None
                         unified_5h_utilization: float | None = None
                         unified_7d_utilization: float | None = None
+                        response_metadata = AnthropicResponseMetadata()
                         cache_creation_tier = _apply_cache_tier(body_payload, headers, inbound_headers, provider_name)
 
                         if openai_body is None:
@@ -805,9 +803,20 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                     if raw_body is not None:
                                         raw_body.extend(chunk_bytes)
                                     else:
-                                        text_buffer, usage, chunk_error, saw_output = (
-                                            collect_chat_usage if openai_body is not None else _collect_usage_from_chunk
-                                        )(text_buffer, chunk_bytes, usage)
+                                        if openai_body is not None:
+                                            text_buffer, usage, chunk_error, saw_output = collect_chat_usage(
+                                                text_buffer, chunk_bytes, usage
+                                            )
+                                        else:
+                                            (
+                                                text_buffer,
+                                                usage,
+                                                chunk_error,
+                                                saw_output,
+                                                response_metadata,
+                                            ) = _collect_response_from_chunk(
+                                                text_buffer, chunk_bytes, usage, response_metadata
+                                            )
                                         if latency_first_token_ms is None and saw_output:
                                             latency_first_token_ms = int((time.monotonic() - started_at) * 1000)
                                         if chunk_error is not None:
@@ -827,11 +836,19 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                 if unsent:
                                     yield bytes(unsent)
                                 if raw_body is not None:
-                                    usage = (
-                                        chat_usage(json.loads(raw_body))
-                                        if openai_body is not None
-                                        else _usage_from_json_body(bytes(raw_body))
-                                    ) or usage
+                                    if openai_body is not None:
+                                        usage = chat_usage(json.loads(raw_body)) or usage
+                                    else:
+                                        parsed_usage, response_metadata = _parse_json_response(bytes(raw_body))
+                                        usage = parsed_usage or usage
+                                if openai_body is None:
+                                    observe_anthropic_response(
+                                        request_id=request_id,
+                                        account_id=account.id,
+                                        provider_name=provider_name,
+                                        requested_model=upstream_requested_model(body_payload, payload.model),
+                                        metadata=response_metadata,
+                                    )
 
                                 if stream_error is not None:
                                     stream_error_type = stream_error.error.type or "unknown"
@@ -878,6 +895,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                         usage=usage,
                                         cache_creation_tier=cache_creation_tier,
                                         latency_first_token_ms=latency_first_token_ms,
+                                        response_metadata=response_metadata,
                                     )
                                     await self._finalize_api_key_reservation(
                                         api_key_reservation,
@@ -911,6 +929,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                     usage=usage,
                                     cache_creation_tier=cache_creation_tier,
                                     latency_first_token_ms=latency_first_token_ms,
+                                    response_metadata=response_metadata,
                                 )
                                 await self._finalize_api_key_reservation(
                                     api_key_reservation,
@@ -954,6 +973,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                 quota_observed_at=quota_observed_at,
                                 unified_5h_utilization=unified_5h_utilization,
                                 unified_7d_utilization=unified_7d_utilization,
+                                response_metadata=response_metadata,
                             )
                         )
                         if not streamed_bytes:
@@ -1684,6 +1704,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         unified_headers: dict[str, str] | None = None,
         quota_observed_at: datetime | None = None,
         request_kind: str = "normal",
+        response_metadata: AnthropicResponseMetadata | None = None,
     ) -> None:
 
         task = asyncio.create_task(
@@ -1710,6 +1731,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                 unified_headers=unified_headers,
                 quota_observed_at=quota_observed_at,
                 request_kind=request_kind,
+                response_metadata=response_metadata,
             )
         )
         try:
@@ -1753,6 +1775,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         quota_observed_at: datetime | None = None,
         identity: RequestIdentity | None = None,
         request_kind: str = "normal",
+        response_metadata: AnthropicResponseMetadata | None = None,
     ) -> None:
         try:
             dispatch_id = get_dispatch_id()
@@ -1767,6 +1790,9 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                     api_key_id=api_key.id if api_key else None,
                     request_id=request_id,
                     model=model,
+                    response_model=response_metadata.response_model if response_metadata else None,
+                    stop_reason=response_metadata.stop_reason if response_metadata else None,
+                    stop_details_category=response_metadata.stop_details_category if response_metadata else None,
                     reasoning_effort=reasoning_effort,
                     input_tokens=usage.input_tokens if usage else None,
                     output_tokens=usage.output_tokens if usage else None,
@@ -1845,6 +1871,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         quota_observed_at: datetime | None = None,
         unified_5h_utilization: float | None = None,
         unified_7d_utilization: float | None = None,
+        response_metadata: AnthropicResponseMetadata | None = None,
     ) -> None:
         await self._finalize_api_key_reservation(
             reservation, model=model, usage=usage, cache_creation_tier=cache_creation_tier
@@ -1870,6 +1897,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             unified_7d_utilization=unified_7d_utilization,
             usage=usage,
             latency_first_token_ms=latency_first_token_ms,
+            response_metadata=response_metadata,
         )
 
     async def _release_on_early_disconnect(
@@ -2202,24 +2230,6 @@ def _frame_end_to_end_headers(headers: Mapping[str, str]) -> dict[str, str]:
     return {key: value for key, value in headers.items() if key.lower() not in excluded}
 
 
-def _usage_from_json_body(raw: bytes) -> AnthropicUsage | None:
-    if not raw:
-        return None
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    usage_data = payload.get("usage")
-    if not isinstance(usage_data, dict):
-        return None
-    try:
-        return AnthropicUsage.model_validate(usage_data)
-    except ValidationError:
-        return None
-
-
 def _pool_wait_should_hold(
     exc: AnthropicProxyError,
     *,
@@ -2264,44 +2274,3 @@ async def _release_upstream_response(resp: object) -> None:
     released = release()
     if asyncio.iscoroutine(released) or asyncio.isfuture(released):
         await released
-
-
-def _extra_usage_tripwire_header(headers: Mapping[str, str]) -> str | None:
-    overage_in_use = get_header(headers, _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER)
-    if isinstance(overage_in_use, str) and overage_in_use.strip().lower() == "true":
-        return _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER
-    for name in _ANTHROPIC_UNIFIED_STATUS_HEADERS:
-        value = get_header(headers, name)
-        if value is None:
-            continue
-        normalized = value.strip().lower()
-        if normalized and normalized not in _ANTHROPIC_UNIFIED_ALLOWED_STATUSES:
-            return name
-    return None
-
-
-def _extra_usage_tripwire_error(headers: Mapping[str, str]) -> UpstreamError | None:
-    if not _unified_limit_exhausted(headers):
-        return None
-    error = UpstreamError(message="Anthropic unified limit exhausted; upstream is billing extra-usage credits")
-    reset_at = _parse_reset_epoch(get_header(headers, "anthropic-ratelimit-unified-reset"))
-    if reset_at is None:
-        reset_at = _parse_reset_epoch(get_header(headers, "anthropic-ratelimit-unified-5h-reset"))
-    if reset_at is not None:
-        error["resets_at"] = reset_at
-    return error
-
-
-def _unified_limit_exhausted(headers: Mapping[str, str]) -> bool:
-    overage_in_use = get_header(headers, _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER)
-    if isinstance(overage_in_use, str) and overage_in_use.strip().lower() == "true":
-        return True
-    for name in _ANTHROPIC_UNIFIED_STATUS_HEADERS:
-        value = get_header(headers, name)
-        if value is None:
-            continue
-        normalized = value.strip().lower()
-
-        if normalized and normalized not in _ANTHROPIC_UNIFIED_ALLOWED_STATUSES:
-            return True
-    return False

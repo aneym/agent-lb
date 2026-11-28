@@ -104,6 +104,14 @@ class AnthropicMessageRequest(BaseModel):
     top_p: StrictFloat | StrictInt | None = None
 
 
+class AnthropicStopDetails(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: StrictStr | None = None
+    category: StrictStr | None = None
+    explanation: StrictStr | None = None
+
+
 class AnthropicMessageResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -114,6 +122,7 @@ class AnthropicMessageResponse(BaseModel):
     content: list[AnthropicContentBlock]
     stop_reason: StrictStr | None = None
     stop_sequence: StrictStr | None = None
+    stop_details: AnthropicStopDetails | None = None
     usage: AnthropicUsage | None = None
 
 
@@ -132,6 +141,7 @@ class AnthropicMessageDelta(BaseModel):
 
     stop_reason: StrictStr | None = None
     stop_sequence: StrictStr | None = None
+    stop_details: AnthropicStopDetails | None = None
 
 
 class AnthropicMessageStartEvent(BaseModel):
@@ -169,6 +179,7 @@ class AnthropicMessageDeltaEvent(BaseModel):
 
     type: Literal["message_delta"]
     delta: AnthropicMessageDelta
+    stop_details: AnthropicStopDetails | None = None
     usage: AnthropicUsage | None = None
 
 

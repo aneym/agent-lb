@@ -149,6 +149,9 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
         upstream_cost_usd: float | None = None,
         client_session_id: str | None = None,
         upstream_observation: UpstreamObservation | None = None,
+        response_model: str | None = None,
+        stop_reason: str | None = None,
+        stop_details_category: str | None = None,
     ) -> RequestLog:
         parts = await measured_parts()
         if status == "error":
@@ -196,6 +199,9 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
                 quota_observed_at=quota_observed_at,
                 request_id=resolved_request_id,
                 model=model,
+                response_model=response_model,
+                stop_reason=stop_reason,
+                stop_details_category=stop_details_category,
                 plan_type=resolved_plan_type,
                 transport=transport,
                 request_kind=request_kind,

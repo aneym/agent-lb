@@ -254,6 +254,18 @@ if PROMETHEUS_AVAILABLE:
         "Total event loop lag samples exceeding the warning threshold",
         registry=REGISTRY,
     )
+    anthropic_refusals_total = Counter(
+        "agent_lb_anthropic_refusals_total",
+        "Total Anthropic upstream refusals by model, category, and billing status",
+        ["requested_model", "response_model", "category", "billed"],
+        registry=REGISTRY,
+    )
+    anthropic_model_mismatches_total = Counter(
+        "agent_lb_anthropic_model_mismatches_total",
+        "Total Anthropic upstream response model mismatches",
+        ["requested_model", "response_model"],
+        registry=REGISTRY,
+    )
 
     def make_scrape_registry() -> CollectorRegistryLike:
         if MULTIPROCESS_MODE:
@@ -308,6 +320,8 @@ else:
     account_cap_rejections_total: CounterLike | None = None
     event_loop_lag_seconds: GaugeLike | None = None
     event_loop_lag_events_total: CounterLike | None = None
+    anthropic_refusals_total: CounterLike | None = None
+    anthropic_model_mismatches_total: CounterLike | None = None
 
     def make_scrape_registry() -> None:
         return None
@@ -327,6 +341,8 @@ __all__ = [
     "account_lease_released_total",
     "account_lease_stale_reclaimed_total",
     "accounts_total",
+    "anthropic_model_mismatches_total",
+    "anthropic_refusals_total",
     "bridge_instance_mismatch_total",
     "bridge_forward_latency_seconds",
     "bridge_durable_recover_total",
